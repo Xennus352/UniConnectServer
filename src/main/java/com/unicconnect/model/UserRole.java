@@ -1,0 +1,5 @@
+package com.unicconnect.model;
+
+public enum UserRole {
+    STUDENT, TEACHER, FINANCE_ACCOUNTANT, SYSTEM_ADMIN, STUDENT_AFFAIRS_ADMIN, RECTOR_PRO_RECTOR
+}
