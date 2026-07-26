@@ -24,3 +24,9 @@ spring:
         jdbc:
           lob:
             non_contextual_creation: true
+
+jwt:
+  secret: your-256-bit-secret-key-change-this-in-production-env-please-must-be-at-least-32-bytes
+  access-token-expiration-ms: 900000
+  refresh-token-expiration-ms: 604800000
+  refresh-token-cookie-name: refresh_token

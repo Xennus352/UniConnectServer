@@ -248,3 +248,44 @@ export default defineSchema({
 4. **Roll Call & Attendance Alerts**:
    - Spring Boot updates `attendance_summary`.
    - When `is_below_75` evaluates to `true`, a trigger or Spring service automatically pushes an alert notification to Convex `notifications`.
+
+
+
+### Authentication Enhancements
+
+#### Updated `users` table additions
+
+```sql
+ALTER TABLE users
+ADD COLUMN must_change_password BOOLEAN DEFAULT TRUE,
+ADD COLUMN last_login TIMESTAMP,
+ADD COLUMN failed_login_attempts INT DEFAULT 0,
+ADD COLUMN account_locked_until TIMESTAMP,
+ADD COLUMN password_changed_at TIMESTAMP,
+ADD COLUMN last_password_reset TIMESTAMP;
+```
+
+#### Refresh Tokens
+
+```sql
+CREATE TABLE refresh_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    revoked BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    device_name VARCHAR(255),
+    ip_address VARCHAR(100)
+);
+```
+
+### Authentication Flow
+
+- Accounts are created only by administrators.
+- Users authenticate with **email + password**.
+- Passwords are hashed using BCrypt (or Argon2).
+- Spring Boot + Spring Security issue JWT Access Tokens and Refresh Tokens.
+- Refresh Token is stored as an HttpOnly cookie.
+- Users with `must_change_password = TRUE` are redirected to change their password after first login.
+- Convex trusts the authenticated Neon user ID from the JWT and does not perform authentication itself.
