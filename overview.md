@@ -2,10 +2,10 @@
 
 ## 1. System Overview
 
-**UniConnect** is a comprehensive University Communication & Social Networking System. This repository contains the **Spring Boot REST API** backend that handles authentication, user management, academic records, attendance, finances, and departmental operations.
+**UniConnect** is a comprehensive University Communication & Social Networking System. This repository contains the **Spring Boot REST API** backend that handles authentication, user management, academic records, attendance, and departmental operations.
 
 The system uses a dual-database architecture:
-- **Neon (Serverless PostgreSQL)** — Relational core data (users, grades, attendance, finance, departments) managed by this Spring Boot API via JPA/Hibernate
+- **Neon (Serverless PostgreSQL)** — Relational core data (users, grades, attendance, departments) managed by this Spring Boot API via JPA/Hibernate
 - **Convex DB** — Real-time features (chat, messaging, posts, notifications) managed by the Next.js frontend
 
 ### Technology Stack
@@ -19,6 +19,7 @@ The system uses a dual-database architecture:
 | Database | Neon Serverless PostgreSQL |
 | Build | Maven |
 | Password Hashing | BCrypt |
+| Remote Method Invocation | Java RMI (`java.rmi`, in-process on port 1099) |
 
 ---
 
@@ -34,7 +35,9 @@ src/main/java/com/unicconnect/
 │   ├── JwtUtil.java                    # Token generation, validation, hashing
 │   └── SecurityConfig.java             # Security filter chain, endpoint rules
 ├── controller/
+│   ├── AcademicController.java          # Grades retrieval (via RMI)
 │   ├── AdminController.java            # Admin user creation
+│   ├── AttendanceController.java       # Attendance queries (via RMI)
 │   ├── AuthController.java             # Login, refresh, change password, logout
 │   ├── DepartmentController.java       # Department CRUD
 │   ├── HealthController.java           # Health check endpoint
@@ -59,30 +62,41 @@ src/main/java/com/unicconnect/
 │   ├── Department.java                 # Department (name + code)
 │   ├── DepartmentHead.java             # HOD assignment per department
 │   ├── DepartmentMeeting.java          # Meeting records per department
-│   ├── FinancialRecord.java            # Salaries, fees, scholarships
-│   ├── FinancialStatus.java            # Enum: PENDING, APPROVED, PAID, REJECTED
-│   ├── FinancialType.java              # Enum: SALARY, SCHOLARSHIP, STIPEND, TUITION_FEE
-│   ├── ProjectSupervision.java         # Teacher-project assignments
 │   ├── RefreshToken.java               # Refresh token storage
 │   ├── RegistrationStatus.java         # Enum: PENDING, APPROVED, REJECTED
 │   ├── StudentProfile.java             # Student-specific data (ID number, batch, section)
 │   ├── User.java                       # Core user entity
-│   └── UserRole.java                   # Enum: STUDENT, TEACHER, FINANCE, MANAGE, etc.
+│   └── UserRole.java                   # Enum: STUDENT, TEACHER, MANAGE, STUDENT_AFFAIRS, RECTOR, PRO_RECTOR
 ├── repository/
 │   ├── AcademicRecordRepository.java
 │   ├── AttendanceSummaryRepository.java
 │   ├── DepartmentHeadRepository.java
 │   ├── DepartmentMeetingRepository.java
 │   ├── DepartmentRepository.java
-│   ├── FinancialRecordRepository.java
-│   ├── ProjectSupervisionRepository.java
 │   ├── RefreshTokenRepository.java
 │   ├── StudentProfileRepository.java
 │   └── UserRepository.java
-└── service/
-    ├── AuthService.java                # Login, register, refresh, change password, logout
-    ├── DepartmentService.java          # Department CRUD logic
-    └── UserService.java                # User queries with student profile details
+├── service/
+│   ├── AcademicService.java            # Delegates to AcademicRmiClient
+│   ├── AttendanceService.java          # Delegates to AttendanceRmiClient
+│   ├── AuthService.java                # Login, register, refresh, change password, logout
+│   ├── DepartmentService.java          # Department CRUD logic
+│   └── UserService.java                # User queries with student profile details
+└── rmi/
+    ├── client/
+    │   ├── AcademicRmiClient.java      # RMI stub lookup + proxy for AcademicRemote
+    │   └── AttendanceRmiClient.java    # RMI stub lookup + proxy for AttendanceRemote
+    ├── config/
+    │   └── RmiConfig.java              # Starts RMI registry (port 1099), binds services
+    ├── dto/
+    │   ├── AcademicRecordDto.java      # Serializable DTO for grades
+    │   └── AttendanceSummaryDto.java   # Serializable DTO for attendance
+    ├── remote/
+    │   ├── AcademicRemote.java         # Remote interface: getGrades, getGradesByYear
+    │   └── AttendanceRemote.java       # Remote interface: getAttendance, calculate, below75
+    └── server/
+        ├── AcademicRemoteServer.java   # UnicastRemoteObject impl, uses AcademicRecordRepository
+        └── AttendanceRemoteServer.java # UnicastRemoteObject impl, uses AttendanceSummaryRepository
 ```
 
 ---
@@ -93,10 +107,8 @@ src/main/java/com/unicconnect/
 
 | Enum | Values |
 |------|--------|
-| `user_role` | STUDENT, TEACHER, FINANCE, MANAGE, STUDENT_AFFAIRS, RECTOR, PRO_RECTOR |
+| `user_role` | STUDENT, TEACHER, MANAGE, STUDENT_AFFAIRS, RECTOR, PRO_RECTOR |
 | `registration_status` | PENDING, APPROVED, REJECTED |
-| `financial_type` | SALARY, SCHOLARSHIP, STIPEND, TUITION_FEE |
-| `financial_status` | PENDING, APPROVED, PAID, REJECTED |
 
 ### 3.2 Tables
 
@@ -170,18 +182,6 @@ src/main/java/com/unicconnect/
 | is_below_75 | BOOLEAN | Computed (TRUE if percentage < 75) |
 | updated_at | TIMESTAMP | |
 
-#### `financial_records`
-| Column | Type | Notes |
-|--------|------|-------|
-| id | BIGSERIAL PK | |
-| user_id | BIGINT FK | References users(id) |
-| type | financial_type | |
-| amount | NUMERIC(12,2) | |
-| status | financial_status | Default PENDING |
-| description | TEXT | |
-| processed_by | BIGINT FK | References users(id), nullable |
-| created_at | TIMESTAMP | |
-
 #### `department_meetings`
 | Column | Type | Notes |
 |--------|------|-------|
@@ -192,15 +192,6 @@ src/main/java/com/unicconnect/
 | summary_notes | TEXT | |
 | created_by | BIGINT FK | References users(id) |
 | created_at | TIMESTAMP | |
-
-#### `project_supervisions`
-| Column | Type | Notes |
-|--------|------|-------|
-| id | BIGSERIAL PK | |
-| teacher_id | BIGINT FK | References users(id) |
-| project_title | VARCHAR(255) | |
-| department_id | BIGINT FK | References departments(id) |
-| assigned_at | TIMESTAMP | |
 
 #### `refresh_tokens`
 | Column | Type | Notes |
@@ -222,13 +213,12 @@ src/main/java/com/unicconnect/
 |------|-------|-------------|
 | Student | `STUDENT` | Views grades, attendance, posts |
 | Teacher | `TEACHER` | Manages grades, attendance, supervision |
-| Finance | `FINANCE` | Manages salaries, fees, scholarships |
 | Admin (Manager) | `MANAGE` | Full system access, creates all accounts |
 | Student Affairs | `STUDENT_AFFAIRS` | Student welfare and affairs |
 | Rector | `RECTOR` | Head of university |
 | Pro Rector | `PRO_RECTOR` | Deputy head of university |
 
-**Head of Teacher** — Determined by the `department_heads` table, not a separate role. When a teacher is assigned as HOD, they gain access to departmental meetings, project supervisor assignments, and broadcast notices.
+**Head of Teacher** — Determined by the `department_heads` table, not a separate role. When a teacher is assigned as HOD, they gain access to departmental meeting scheduling and broadcast notices.
 
 ---
 
@@ -458,7 +448,7 @@ Step 3:  POST /api/departments (as admin)
          → Create departments (CS, EE, ME, etc.)
 
 Step 4:  POST /api/admin/users/create (as admin)
-         → Create teachers, students, finance staff, etc.
+         → Create teachers, students, etc.
          → Response includes temp password for each user
 
 Step 5:  Each user logs in and changes password
@@ -535,7 +525,70 @@ Validation errors include field-level details:
 
 ---
 
-## 11. Running the Project
+## 11. RMI (Remote Method Invocation) Architecture
+
+The Grading, and Attendance modules use Java RMI for internal backend communication. REST controllers remain the public interface; they delegate to Spring services, which delegate to RMI clients, which invoke remote server implementations.
+
+### Architecture Flow
+
+```
+Next.js (REST + JWT)
+  ↓
+Spring Boot Controllers    ←── local JWT auth
+  ↓
+Spring Services            ←── delegates to RMI clients
+  ↓
+RMI Clients                ←── Naming.lookup(), cached stubs
+  ↓
+RMI Registry (port 1099)
+  ↓
+RMI Server Implementations ←── extend UnicastRemoteObject
+  ↓
+Spring Data Repositories
+  ↓
+PostgreSQL (Neon)
+```
+
+### Remote Interfaces
+
+| Interface | Methods | Description |
+|-----------|---------|-------------|
+| `AcademicRemote` | `getGrades(studentId)`, `getGradesByYear(studentId, year)` | Grade retrieval |
+| `AttendanceRemote` | `getAttendance(studentId)`, `calculateAttendance(studentId, subjectCode)`, `getStudentsBelow75()` | Attendance queries |
+
+### Lifecycle
+
+- **Startup**: `RmiConfig` creates an RMI registry on port 1099 and binds `AcademicService` and `AttendanceService` via `Naming.rebind()`.
+- **Runtime**: RMI clients (`AcademicRmiClient`, etc.) look up stubs via `Naming.lookup()` on `@PostConstruct` and cache them. Spring Services delegate to these clients. `RemoteException` is caught and rethrown as `RuntimeException`.
+- **Shutdown**: Registry is torn down gracefully via `@PreDestroy`.
+
+### Configuration (application.yml)
+
+```yaml
+rmi:
+  host: localhost
+  port: 1099
+```
+
+### Endpoints that use RMI
+
+| Method | Path | RMI Service |
+|--------|------|-------------|
+| `GET` | `/api/academic/grades/{studentId}` | AcademicRemote |
+| `GET` | `/api/academic/grades/{studentId}/{academicYear}` | AcademicRemote |
+| `GET` | `/api/attendance/{studentId}` | AttendanceRemote |
+| `GET` | `/api/attendance/calculate/{studentId}/{subjectCode}` | AttendanceRemote |
+| `GET` | `/api/attendance/below75` | AttendanceRemote |
+
+### Constraints
+
+- JWT authentication stays in REST only — RMI is purely internal backend communication.
+- RMI is **not** exposed to browsers.
+- Existing REST endpoints, DTOs, and response formats are preserved.
+
+---
+
+## 12. Running the Project
 
 ```bash
 # Build

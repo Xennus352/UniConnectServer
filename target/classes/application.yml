@@ -30,3 +30,7 @@ jwt:
   access-token-expiration-ms: 900000
   refresh-token-expiration-ms: 604800000
   refresh-token-cookie-name: refresh_token
+
+rmi:
+  host: localhost
+  port: 1099
