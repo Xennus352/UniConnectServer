@@ -2,6 +2,7 @@ package com.unicconnect.controller;
 
 import com.unicconnect.dto.*;
 import com.unicconnect.service.AuthService;
+import com.unicconnect.service.UserService;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -16,9 +17,11 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+    private final UserService userService;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, UserService userService) {
         this.authService = authService;
+        this.userService = userService;
     }
 
     @PostMapping("/login")
@@ -60,6 +63,13 @@ public class AuthController {
     public ResponseEntity<ApiResponse> logout(Authentication authentication) {
         Long userId = Long.parseLong((String) authentication.getPrincipal());
         ApiResponse response = authService.logout(userId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<UserResponse> me(Authentication authentication) {
+        Long userId = Long.parseLong((String) authentication.getPrincipal());
+        UserResponse response = userService.getUserById(userId);
         return ResponseEntity.ok(response);
     }
 }
