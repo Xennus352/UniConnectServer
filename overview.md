@@ -504,7 +504,7 @@ jwt:
 ```
 
 ### CORS
-- Allowed origins: `http://localhost:3000`
+- Allowed origins: All origins (`Access-Control-Allow-Origin: *` via origin patterns)
 - Allowed methods: GET, POST, PUT, DELETE, PATCH, OPTIONS
 - Allowed headers: `*`
 - Credentials: true
@@ -613,6 +613,7 @@ rmi:
 
 ## 12. Running the Project
 
+### Local Development
 ```bash
 # Build
 ./mvnw clean compile
@@ -625,9 +626,34 @@ rmi:
 # Health: http://localhost:8080/api/health
 ```
 
+### Docker
+```bash
+# Build image
+docker build -t unicconnect-api .
+
+# Run container
+docker run -p 8080:8080 \
+  -e DB_URL=jdbc:postgresql://<host>/<db>?sslmode=require \
+  -e DB_USERNAME=<user> \
+  -e DB_PASSWORD=<pass> \
+  -e JWT_SECRET=<256-bit-secret> \
+  unicconnect-api
+```
+
+### Deploy to Render
+1. Push the repository to GitHub.
+2. In Render Dashboard → **New +** → **Blueprint** (or **Web Service**).
+3. Connect your repository. Render auto-detects the `Dockerfile`.
+4. Set the following **Environment Variables**:
+   - `DB_URL` — Your Neon PostgreSQL connection string
+   - `DB_USERNAME` — Database username
+   - `DB_PASSWORD` — Database password
+   - `JWT_SECRET` — A 256-bit secret for JWT signing
+5. Deploy. Render builds the Docker image and starts the container.
+
 ---
 
-## 12. Future Modules (Planned — Convex DB Side)
+## 13. Future Modules (Planned — Convex DB Side)
 
 The following features are designed in the schema spec but managed by Convex on the frontend:
 - Real-time direct messaging (with permission requests)

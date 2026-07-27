@@ -1,11 +1,11 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
 
 spring:
   datasource:
-    url: jdbc:postgresql://ep-aged-night-ayo79t27-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require
-    username: neondb_owner
-    password: npg_rBcki3bLJ7pa
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -26,7 +26,7 @@ spring:
             non_contextual_creation: true
 
 jwt:
-  secret: your-256-bit-secret-key-change-this-in-production-env-please-must-be-at-least-32-bytes
+  secret: ${JWT_SECRET}
   access-token-expiration-ms: 900000
   refresh-token-expiration-ms: 604800000
   refresh-token-cookie-name: refresh_token
