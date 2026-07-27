@@ -241,16 +241,39 @@ src/main/java/com/unicconnect/
 | Access Token | 15 minutes | Client-side (memory/localStorage) |
 | Refresh Token | 7 days | Hashed in DB (SHA-256), rotated on each refresh |
 
-### 5.3 Security Features
+### 5.3 Login Flow Details
+
+```
+POST /api/auth/login
+  │
+  ├── 1. Find user by email → 401 if not found
+  ├── 2. Auto-unlock if `account_locked_until` has passed (reset attempts to 0)
+  ├── 3. Check `is_active` → 403 FORBIDDEN (DisabledException) if false
+  ├── 4. Check `account_locked_until` future → 423 LOCKED (LockedException) if locked
+  ├── 5. Verify password via BCrypt
+  │     ├── Invalid → increment `failed_login_attempts`
+  │     │            ├── ≥ 5 → lock for 15 min → 423 LOCKED
+  │     │            └── < 5 → 401 with "N attempt(s) remaining" message
+  │     └── Valid → reset attempts, clear lock, set `last_login` = NOW()
+  │                 → return access token + refresh token + `mustChangePassword` flag
+  └──
+```
+
+### 5.4 Security Features
 
 - **BCrypt** password hashing
-- **Account lockout** after 5 failed login attempts (30-minute lock)
+- **Account lockout** after 5 failed login attempts (15-minute lock)
+- **Auto-unlock** once the lock duration has passed (on next login attempt)
+- **Disabled account rejection** — inactive accounts (`is_active = false`) receive HTTP 403
+- **Remaining attempts feedback** — each failed attempt returns the count left before lockout
 - **Must change password** flag on first login
 - **Token rotation** on refresh (old refresh token revoked)
 - **Stateless sessions** (no HTTP session, JWT only)
 - **CORS** configured for `http://localhost:3000` (Next.js frontend)
 
-### 5.4 Password Policy
+### 5.5 Password Policy
+
+### 5.5 Password Policy
 
 - Minimum 8 characters
 - Must be changed on first login (`must_change_password = true`)
@@ -518,7 +541,7 @@ Validation errors include field-level details:
 |-------------|------|
 | 400 | Validation error, bad request |
 | 401 | Invalid credentials, expired/missing JWT |
-| 403 | Authenticated but insufficient role |
+| 403 | Account disabled; authenticated but insufficient role |
 | 409 | Duplicate email |
 | 423 | Account locked (too many failed attempts) |
 | 500 | Internal server error |

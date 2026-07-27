@@ -11,10 +11,9 @@ import com.unicconnect.repository.RefreshTokenRepository;
 import com.unicconnect.repository.UserRepository;
 import com.unicconnect.repository.DepartmentRepository;
 import com.unicconnect.repository.StudentProfileRepository;
-import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.LockedException;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,7 +26,6 @@ import java.time.LocalDateTime;
 @Transactional
 public class AuthService {
 
-    private final AuthenticationManager authenticationManager;
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final DepartmentRepository departmentRepository;
@@ -36,16 +34,14 @@ public class AuthService {
     private final JwtUtil jwtUtil;
 
     private static final int MAX_FAILED_ATTEMPTS = 5;
-    private static final int LOCK_DURATION_MINUTES = 30;
+    private static final int LOCK_DURATION_MINUTES = 15;
 
-    public AuthService(AuthenticationManager authenticationManager,
-                       UserRepository userRepository,
+    public AuthService(UserRepository userRepository,
                        RefreshTokenRepository refreshTokenRepository,
                        DepartmentRepository departmentRepository,
                        StudentProfileRepository studentProfileRepository,
                        PasswordEncoder passwordEncoder,
                        JwtUtil jwtUtil) {
-        this.authenticationManager = authenticationManager;
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.departmentRepository = departmentRepository;
@@ -77,21 +73,33 @@ public class AuthService {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new BadCredentialsException("Invalid email or password"));
 
-        if (user.getAccountLockedUntil() != null && LocalDateTime.now().isBefore(user.getAccountLockedUntil())) {
-            throw new LockedException("Account is locked. Try again after " + user.getAccountLockedUntil());
+        if (user.getAccountLockedUntil() != null && LocalDateTime.now().isAfter(user.getAccountLockedUntil())) {
+            user.setAccountLockedUntil(null);
+            user.setFailedLoginAttempts(0);
+            userRepository.save(user);
         }
 
         if (!user.getIsActive()) {
-            throw new BadCredentialsException("Account is deactivated");
+            throw new DisabledException("Account is disabled");
         }
 
-        try {
-            authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
-            );
-        } catch (BadCredentialsException e) {
-            handleFailedLogin(user);
-            throw e;
+        if (user.getAccountLockedUntil() != null && LocalDateTime.now().isBefore(user.getAccountLockedUntil())) {
+            throw new LockedException("Account is locked due to too many failed login attempts. Try again later.");
+        }
+
+        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+            int attempts = user.getFailedLoginAttempts() + 1;
+            user.setFailedLoginAttempts(attempts);
+
+            if (attempts >= MAX_FAILED_ATTEMPTS) {
+                user.setAccountLockedUntil(LocalDateTime.now().plusMinutes(LOCK_DURATION_MINUTES));
+                userRepository.save(user);
+                throw new LockedException("Account locked due to too many failed login attempts. Try again in 15 minutes.");
+            }
+
+            userRepository.save(user);
+            int remaining = MAX_FAILED_ATTEMPTS - attempts;
+            throw new BadCredentialsException("Invalid email or password. " + remaining + " attempt(s) remaining before account lockout.");
         }
 
         user.setFailedLoginAttempts(0);
@@ -247,17 +255,6 @@ public class AuthService {
                 .orElseThrow(() -> new RuntimeException("User not found"));
         revokeAllRefreshTokens(user);
         return ApiResponse.success("Logged out successfully");
-    }
-
-    private void handleFailedLogin(User user) {
-        int attempts = user.getFailedLoginAttempts() + 1;
-        user.setFailedLoginAttempts(attempts);
-
-        if (attempts >= MAX_FAILED_ATTEMPTS) {
-            user.setAccountLockedUntil(LocalDateTime.now().plusMinutes(LOCK_DURATION_MINUTES));
-        }
-
-        userRepository.save(user);
     }
 
     private void revokeAllRefreshTokens(User user) {

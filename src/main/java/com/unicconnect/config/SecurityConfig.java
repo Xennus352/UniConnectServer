@@ -31,8 +31,11 @@ public class SecurityConfig {
             .cors(cors -> {})
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/api/auth/change-password").authenticated()
+                .requestMatchers("/api/auth/logout").authenticated()
                 .requestMatchers("/api/auth/me").authenticated()
-                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/api/auth/login").permitAll()
+                .requestMatchers("/api/auth/refresh").permitAll()
                 .requestMatchers("/api/setup/**").permitAll()
                 .requestMatchers("/api/health").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("MANAGE")
