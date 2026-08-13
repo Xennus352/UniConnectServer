@@ -84,16 +84,16 @@ public class DevDataInitializer implements CommandLineRunner {
 
     private void seedOrganizationalUnits() {
         String[][] units = {
-            {"CS", "Faculty of Computer Science", "Faculty"},
-            {"CST", "Faculty of Computer Systems and Technologies", "Faculty"},
-            {"IS", "Faculty of Information Science", "Faculty"},
-            {"ITSM", "Department of Information Technologies Support and Maintenance", "Department"},
-            {"COMP", "Faculty of Computing", "Faculty"},
-            {"NL", "Department of Natural Language", "Department"},
-            {"NS", "Department of Natural Science", "Department"},
-            {"ADM", "Department of Administration", "Department"},
-            {"FIN", "Department of Finance", "Department"},
-            {"SA", "Department of Student Affairs", "Department"}
+            {"CS", "Faculty of Computer Science", "ACADEMIC"},
+            {"CST", "Faculty of Computer Systems and Technologies", "ACADEMIC"},
+            {"IS", "Faculty of Information Science", "ACADEMIC"},
+            {"ITSM", "Department of Information Technologies Support and Maintenance", "ACADEMIC"},
+            {"COMP", "Faculty of Computing", "ACADEMIC"},
+            {"NL", "Department of Natural Language", "ACADEMIC"},
+            {"NS", "Department of Natural Science", "ACADEMIC"},
+            {"ADM", "Department of Administration", "ADMINISTRATIVE"},
+            {"FIN", "Department of Finance", "ADMINISTRATIVE"},
+            {"SA", "Department of Student Affairs", "ADMINISTRATIVE"}
         };
         for (String[] u : units) {
             if (!unitRepository.existsByUnitCode(u[0])) {

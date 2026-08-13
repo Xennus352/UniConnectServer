@@ -149,6 +149,7 @@ com\unicconnect\entity\ClassSession.class
 com\unicconnect\entity\RefreshToken.class
 com\unicconnect\service\OrganizationalUnitService.class
 com\unicconnect\repository\GenerationSessionRepository.class
+com\unicconnect\dto\request\CreateUserRequest.class
 com\unicconnect\entity\Semester.class
 com\unicconnect\exception\DuplicateResourceException.class
 com\unicconnect\service\AttendanceService.class

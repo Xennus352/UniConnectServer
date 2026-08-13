@@ -8,6 +8,7 @@ D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\controller\Academic
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\repository\CourseMeetingRequirementRepository.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\service\ResultBatchService.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\CourseRequest.java
+D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\CreateUserRequest.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\MeetingRequirementRequest.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\TimeSlotResponse.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\controller\ResultBatchController.java

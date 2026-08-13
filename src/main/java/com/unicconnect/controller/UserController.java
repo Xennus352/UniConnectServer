@@ -1,5 +1,6 @@
 package com.unicconnect.controller;
 
+import com.unicconnect.dto.request.CreateUserRequest;
 import com.unicconnect.dto.request.UpdateMeRequest;
 import com.unicconnect.dto.request.UpdateUserStatusRequest;
 import com.unicconnect.dto.request.UpdateUserRoleRequest;
@@ -30,9 +31,19 @@ public class UserController {
         return ResponseEntity.ok(userService.getAllUsers());
     }
 
+    @PostMapping
+    public ResponseEntity<UserResponse> create(@Valid @RequestBody CreateUserRequest request) {
+        return ResponseEntity.ok(userService.createUser(request));
+    }
+
     @GetMapping("/me")
     public ResponseEntity<UserResponse> getMe() {
         return ResponseEntity.ok(userService.getMe(securityUtil.currentUserId()));
+    }
+
+    @GetMapping("/role/{roleName}")
+    public ResponseEntity<List<UserResponse>> getByRole(@PathVariable String roleName) {
+        return ResponseEntity.ok(userService.getUsersByRole(roleName));
     }
 
     @GetMapping("/{userId}")

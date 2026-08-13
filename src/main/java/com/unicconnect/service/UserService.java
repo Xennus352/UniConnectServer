@@ -1,9 +1,11 @@
 package com.unicconnect.service;
 
+import com.unicconnect.dto.request.CreateUserRequest;
 import com.unicconnect.dto.request.UpdateMeRequest;
 import com.unicconnect.dto.request.UpdateUserRoleRequest;
 import com.unicconnect.dto.request.UpdateUserStatusRequest;
 import com.unicconnect.dto.response.UserResponse;
+import com.unicconnect.entity.RegistrationStatus;
 import com.unicconnect.entity.Role;
 import com.unicconnect.entity.User;
 import com.unicconnect.exception.DuplicateResourceException;
@@ -38,6 +40,13 @@ public class UserService {
 
     public UserResponse getUserById(UUID userId) {
         return toResponse(findUser(userId));
+    }
+
+    public List<UserResponse> getUsersByRole(String roleName) {
+        return userRepository.findAll().stream()
+                .filter(u -> u.getRole().getRoleName().equalsIgnoreCase(roleName))
+                .map(UserService::toResponse)
+                .toList();
     }
 
     public UserResponse getMe(UUID userId) {
@@ -75,6 +84,25 @@ public class UserService {
         if (request.registrationStatus() != null) {
             user.setRegistrationStatus(request.registrationStatus());
         }
+        return toResponse(userRepository.save(user));
+    }
+
+    @Transactional
+    public UserResponse createUser(CreateUserRequest request) {
+        if (userRepository.existsByEmail(request.email())) {
+            throw new DuplicateResourceException("Email is already in use");
+        }
+
+        Role role = roleRepository.findByRoleName(request.roleName())
+                .orElseThrow(() -> new ValidationException("Role not found: " + request.roleName()));
+
+        User user = new User();
+        user.setEmail(request.email());
+        user.setPasswordHash(passwordEncoder.encode(request.password()));
+        user.setRole(role);
+        user.setActive(true);
+        user.setRegistrationStatus(RegistrationStatus.APPROVED);
+
         return toResponse(userRepository.save(user));
     }
 
