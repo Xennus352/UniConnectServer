@@ -37,7 +37,7 @@ public class TeachingAssignmentService {
     public List<TeachingAssignmentResponse> getAll(UUID termId, UUID staffId, UUID courseId, UUID sectionId) {
         List<TeachingAssignment> assignments;
         if (termId != null) {
-            assignments = assignmentRepository.findByTerm_TermId(termId);
+            assignments = assignmentRepository.findWithDetailsByTermId(termId);
         } else if (staffId != null) {
             assignments = assignmentRepository.findByStaff_StaffId(staffId);
         } else if (courseId != null) {
@@ -131,6 +131,11 @@ public class TeachingAssignmentService {
                 assignment.getStaff().getStaffId(),
                 assignment.getStaff().getStaffNo(),
                 assignment.getStaff().getStaffName(),
+                assignment.getStaff().getUser().getEmail(),
+                assignment.getStaff().getUnit() != null
+                        ? assignment.getStaff().getUnit().getUnitId() : null,
+                assignment.getStaff().getUnit() != null
+                        ? assignment.getStaff().getUnit().getUnitName() : null,
                 assignment.getSection().getSectionId(),
                 assignment.getSection().getSectionName(),
                 assignment.getTerm().getTermId(),

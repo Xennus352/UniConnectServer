@@ -16,6 +16,7 @@ D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\Studen
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\AcademicTermRequest.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\UpdateUserRoleRequest.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\MajorResponse.java
+D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\ResultUploadSummary.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\repository\ExamTypeRepository.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\repository\MajorRepository.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\ScheduleRequest.java
@@ -41,10 +42,12 @@ D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\repository\ResultBa
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\TeachingAssignmentRequest.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\service\TimetableGenerationService.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\SectionRequest.java
+D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\SectionInfoResponse.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\AttendanceResponse.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\repository\RefreshTokenRepository.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\UserResponse.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\repository\AttendanceRepository.java
+D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\service\StorageService.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\OrganizationalUnitRequest.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\entity\StaffPositionAssignment.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\controller\ResultDocumentController.java
@@ -55,6 +58,7 @@ D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\service\ClassSchedu
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\entity\MeetingType.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\request\UpdateMeRequest.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\config\CorsConfig.java
+D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\LecturerResponse.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\controller\CourseMeetingRequirementController.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\repository\CourseRepository.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\ExamTypeResponse.java
@@ -114,6 +118,7 @@ D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\entity\ClassSession
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\service\CourseService.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\entity\RefreshToken.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\controller\OrganizationalUnitController.java
+D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\dto\response\AssignedCourseResponse.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\service\OrganizationalUnitService.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\controller\ClassScheduleController.java
 D:\UniConnect\UniConnectServer\src\main\java\com\unicconnect\service\SemesterService.java

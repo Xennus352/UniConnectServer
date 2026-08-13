@@ -126,8 +126,11 @@ public class ClassSessionService {
         return new ClassSessionResponse(
                 session.getSessionId(),
                 schedule.getScheduleId(),
+                schedule.getGeneration().getTerm().getTermId(),
                 schedule.getTeachingAssignment() != null
                         ? schedule.getTeachingAssignment().getCourse().getCourseCode() : null,
+                schedule.getTeachingAssignment() != null
+                        ? schedule.getTeachingAssignment().getSection().getSectionId() : null,
                 schedule.getTeachingAssignment() != null
                         ? schedule.getTeachingAssignment().getSection().getSectionName() : null,
                 session.getSessionDate(),

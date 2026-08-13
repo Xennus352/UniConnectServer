@@ -11,12 +11,15 @@ import com.unicconnect.exception.ResourceNotFoundException;
 import com.unicconnect.repository.CourseRepository;
 import com.unicconnect.repository.MajorRepository;
 import com.unicconnect.repository.OrganizationalUnitRepository;
+import com.unicconnect.repository.StaffPositionAssignmentRepository;
 import com.unicconnect.repository.StaffRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional(readOnly = true)
@@ -24,15 +27,18 @@ public class OrganizationalUnitService {
 
     private final OrganizationalUnitRepository unitRepository;
     private final StaffRepository staffRepository;
+    private final StaffPositionAssignmentRepository assignmentRepository;
     private final MajorRepository majorRepository;
     private final CourseRepository courseRepository;
 
     public OrganizationalUnitService(OrganizationalUnitRepository unitRepository,
                                      StaffRepository staffRepository,
+                                     StaffPositionAssignmentRepository assignmentRepository,
                                      MajorRepository majorRepository,
                                      CourseRepository courseRepository) {
         this.unitRepository = unitRepository;
         this.staffRepository = staffRepository;
+        this.assignmentRepository = assignmentRepository;
         this.majorRepository = majorRepository;
         this.courseRepository = courseRepository;
     }
@@ -79,7 +85,14 @@ public class OrganizationalUnitService {
 
     public List<StaffResponse> getStaff(UUID unitId) {
         findUnit(unitId);
-        return staffRepository.findByUnit_UnitId(unitId).stream().map(StaffService::toResponse).toList();
+        List<com.unicconnect.entity.Staff> staff = staffRepository.findByUnit_UnitId(unitId);
+        Map<UUID, List<com.unicconnect.entity.StaffPositionAssignment>> assignmentsByStaff = assignmentRepository
+                .findAll().stream()
+                .collect(Collectors.groupingBy(pa -> pa.getStaff().getStaffId()));
+        return staff.stream()
+                .map(s -> StaffService.toResponse(s,
+                        assignmentsByStaff.getOrDefault(s.getStaffId(), java.util.Collections.emptyList())))
+                .toList();
     }
 
     public List<MajorResponse> getMajors(UUID unitId) {

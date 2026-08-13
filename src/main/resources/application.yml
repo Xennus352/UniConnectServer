@@ -10,7 +10,7 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
-      connection-timeout: 20000
+      connection-timeout: 45000
 
   jpa:
     # Schema is owned by database/migrations/001_initial_schema.sql.
@@ -27,3 +27,15 @@ jwt:
   secret: ${JWT_SECRET:your-256-bit-secret-key-change-this-in-production-env-please-must-be-at-least-32-bytes}
   access-token-expiration-ms: 900000
   refresh-token-expiration-ms: 604800000
+
+storage:
+  # "local" = disk under base-dir; "supabase" only when URL + key are provided (no SDK needed, REST API).
+  mode: ${STORAGE_MODE:local}
+  base-dir: ${STORAGE_BASE_DIR:./uploads}
+  supabase-url: ${SUPABASE_URL:}
+  supabase-service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+  supabase-bucket: ${SUPABASE_BUCKET:exam-results}
+
+spring.servlet.multipart:
+  max-file-size: 20MB
+  max-request-size: 200MB

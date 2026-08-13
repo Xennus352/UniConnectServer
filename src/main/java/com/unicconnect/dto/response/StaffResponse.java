@@ -2,6 +2,7 @@ package com.unicconnect.dto.response;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 public record StaffResponse(
@@ -16,5 +17,6 @@ public record StaffResponse(
         String unitName,
         LocalDate joinedAt,
         LocalDate leftDate,
-        Instant createdAt
+        Instant createdAt,
+        List<String> positions
 ) {}

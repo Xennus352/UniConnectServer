@@ -29,6 +29,8 @@ com\unicconnect\security\JwtUtil.class
 com\unicconnect\service\ClassScheduleService.class
 com\unicconnect\config\DevDataInitializer.class
 com\unicconnect\repository\StaffRepository.class
+com\unicconnect\dto\response\ResultUploadSummary.class
+com\unicconnect\dto\response\SectionInfoResponse.class
 com\unicconnect\dto\response\ClassSessionResponse.class
 com\unicconnect\exception\BusinessRuleException.class
 com\unicconnect\repository\CourseRepository.class
@@ -49,6 +51,7 @@ com\unicconnect\entity\TermStatus.class
 com\unicconnect\repository\ClassSessionRepository.class
 com\unicconnect\service\ResultDocumentService.class
 com\unicconnect\dto\response\StaffPositionAssignmentResponse.class
+com\unicconnect\service\StorageService.class
 com\unicconnect\dto\request\MarkAttendanceRequest.class
 com\unicconnect\repository\ExamTypeRepository.class
 com\unicconnect\security\CustomUserDetailsService.class
@@ -74,6 +77,7 @@ com\unicconnect\controller\ClassScheduleController.class
 com\unicconnect\dto\request\TeachingAssignmentRequest.class
 com\unicconnect\entity\CourseMeetingRequirement.class
 com\unicconnect\security\SecurityConfig.class
+com\unicconnect\service\ResultBatchService$FileCandidate.class
 com\unicconnect\dto\request\CreateResultBatchRequest.class
 com\unicconnect\repository\TimeSlotRepository.class
 com\unicconnect\dto\request\AcademicTermRequest.class
@@ -115,10 +119,12 @@ com\unicconnect\dto\response\ScheduleResponse.class
 com\unicconnect\entity\AssignmentStatus.class
 com\unicconnect\entity\GenerationStatus.class
 com\unicconnect\dto\request\ClassSessionRequest.class
+com\unicconnect\dto\response\LecturerResponse.class
 com\unicconnect\config\CorsConfig.class
 com\unicconnect\controller\AuthController.class
 com\unicconnect\controller\HealthController.class
 com\unicconnect\entity\User.class
+com\unicconnect\dto\response\AssignedCourseResponse.class
 com\unicconnect\entity\OrganizationalUnit.class
 com\unicconnect\controller\SectionController.class
 com\unicconnect\entity\SessionStatus.class

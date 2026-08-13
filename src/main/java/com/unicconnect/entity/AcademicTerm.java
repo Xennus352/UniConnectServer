@@ -21,7 +21,7 @@ public class AcademicTerm {
     private UUID termId;
 
     @Column(name = "academic_year", nullable = false)
-    private Integer academicYear;
+    private String academicYear;
 
     @Column(name = "start_date")
     private LocalDate startDate;

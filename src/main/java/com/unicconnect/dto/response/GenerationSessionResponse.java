@@ -8,7 +8,7 @@ import java.util.UUID;
 public record GenerationSessionResponse(
         UUID generationId,
         UUID termId,
-        Integer academicYear,
+        String academicYear,
         UUID generatedByStaffId,
         String generatedByStaffNo,
         GenerationStatus status,

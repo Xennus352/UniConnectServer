@@ -53,15 +53,15 @@ public class StudentService {
     public List<StudentResponse> getAll(UUID majorId, UUID semesterId, UUID sectionId, UUID termId) {
         List<Student> students;
         if (majorId != null) {
-            students = studentRepository.findByMajor_MajorId(majorId);
+            students = studentRepository.findByMajor_MajorIdWithDetails(majorId);
         } else if (semesterId != null) {
-            students = studentRepository.findBySemester_SemesterId(semesterId);
+            students = studentRepository.findBySemester_SemesterIdWithDetails(semesterId);
         } else if (sectionId != null) {
-            students = studentRepository.findBySection_SectionId(sectionId);
+            students = studentRepository.findBySection_SectionIdWithDetails(sectionId);
         } else if (termId != null) {
-            students = studentRepository.findByTerm_TermId(termId);
+            students = studentRepository.findByTerm_TermIdWithDetails(termId);
         } else {
-            students = studentRepository.findAll();
+            students = studentRepository.findAllWithDetails();
         }
         return students.stream().map(StudentService::toResponse).toList();
     }

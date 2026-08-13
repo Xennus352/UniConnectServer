@@ -14,7 +14,7 @@ public record StudentResponse(
         UUID sectionId,
         String sectionName,
         UUID termId,
-        Integer academicYear,
+        String academicYear,
         String rollNo,
         String studentName,
         String phoneNo,

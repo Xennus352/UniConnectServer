@@ -8,7 +8,7 @@ import java.util.UUID;
 public record ResultBatchResponse(
         UUID batchId,
         UUID termId,
-        Integer academicYear,
+        String academicYear,
         UUID examTypeId,
         String examTypeName,
         UUID semesterId,

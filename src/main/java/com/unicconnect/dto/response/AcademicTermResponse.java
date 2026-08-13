@@ -7,7 +7,7 @@ import java.util.UUID;
 
 public record AcademicTermResponse(
         UUID termId,
-        Integer academicYear,
+        String academicYear,
         LocalDate startDate,
         LocalDate endDate,
         TermStatus status

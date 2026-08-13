@@ -6,7 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 
 public record AcademicTermRequest(
-        @NotNull Integer academicYear,
+        @NotNull String academicYear,
         LocalDate startDate,
         LocalDate endDate,
         TermStatus status

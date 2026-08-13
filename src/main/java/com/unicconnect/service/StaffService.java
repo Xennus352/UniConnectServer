@@ -2,6 +2,9 @@ package com.unicconnect.service;
 
 import com.unicconnect.dto.request.StaffPositionAssignmentRequest;
 import com.unicconnect.dto.request.StaffRequest;
+import com.unicconnect.dto.response.AssignedCourseResponse;
+import com.unicconnect.dto.response.LecturerResponse;
+import com.unicconnect.dto.response.SectionInfoResponse;
 import com.unicconnect.dto.response.StaffPositionAssignmentResponse;
 import com.unicconnect.dto.response.StaffResponse;
 import com.unicconnect.dto.response.TeachingAssignmentResponse;
@@ -13,8 +16,15 @@ import com.unicconnect.repository.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional(readOnly = true)
@@ -26,27 +36,37 @@ public class StaffService {
     private final StaffPositionAssignmentRepository assignmentRepository;
     private final TeachingAssignmentRepository teachingAssignmentRepository;
     private final OrganizationalUnitRepository unitRepository;
+    private final AcademicTermRepository termRepository;
 
     public StaffService(StaffRepository staffRepository,
                         UserRepository userRepository,
                         PositionRepository positionRepository,
                         StaffPositionAssignmentRepository assignmentRepository,
                         TeachingAssignmentRepository teachingAssignmentRepository,
-                        OrganizationalUnitRepository unitRepository) {
+                        OrganizationalUnitRepository unitRepository,
+                        AcademicTermRepository termRepository) {
         this.staffRepository = staffRepository;
         this.userRepository = userRepository;
         this.positionRepository = positionRepository;
         this.assignmentRepository = assignmentRepository;
         this.teachingAssignmentRepository = teachingAssignmentRepository;
         this.unitRepository = unitRepository;
+        this.termRepository = termRepository;
     }
 
     public List<StaffResponse> getAll() {
-        return staffRepository.findAll().stream().map(StaffService::toResponse).toList();
+        List<Staff> staff = staffRepository.findAll();
+        Map<UUID, List<StaffPositionAssignment>> assignmentsByStaff = assignmentRepository
+                .findAll().stream()
+                .collect(Collectors.groupingBy(pa -> pa.getStaff().getStaffId()));
+        return staff.stream()
+                .map(s -> toResponse(s, assignmentsByStaff.getOrDefault(s.getStaffId(), java.util.Collections.emptyList())))
+                .toList();
     }
 
     public StaffResponse getById(UUID staffId) {
-        return toResponse(findStaff(staffId));
+        Staff staff = findStaff(staffId);
+        return toResponse(staff, assignmentRepository.findByStaff_StaffId(staffId));
     }
 
     @Transactional
@@ -62,7 +82,7 @@ public class StaffService {
 
         Staff staff = new Staff();
         apply(staff, request, user);
-        return toResponse(staffRepository.save(staff));
+        return toResponse(staffRepository.save(staff), List.of());
     }
 
     @Transactional
@@ -74,7 +94,7 @@ public class StaffService {
         User user = userRepository.findById(request.userId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         apply(staff, request, user);
-        return toResponse(staffRepository.save(staff));
+        return toResponse(staffRepository.save(staff), assignmentRepository.findByStaff_StaffId(staffId));
     }
 
     @Transactional
@@ -162,6 +182,82 @@ public class StaffService {
         assignmentRepository.delete(assignment);
     }
 
+    // ---------- Lecturers ----------
+
+    public List<LecturerResponse> getLecturers(UUID termId) {
+        AcademicTerm term = resolveTerm(termId);
+        List<Staff> staff = staffRepository.findAllWithUserAndUnit();
+        Map<UUID, List<StaffPositionAssignment>> positionsByStaff = assignmentRepository
+                .findAllWithPositionAndStaff().stream()
+                .collect(Collectors.groupingBy(pa -> pa.getStaff().getStaffId()));
+        Map<UUID, List<TeachingAssignment>> assignmentsByStaff = teachingAssignmentRepository
+                .findWithDetailsByTermId(term.getTermId()).stream()
+                .collect(Collectors.groupingBy(ta -> ta.getStaff().getStaffId()));
+        return staff.stream()
+                .map(s -> toLecturerResponse(s,
+                        positionsByStaff.getOrDefault(s.getStaffId(), java.util.Collections.emptyList()),
+                        assignmentsByStaff.getOrDefault(s.getStaffId(), java.util.Collections.emptyList())))
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparing(LecturerResponse::staffNo))
+                .toList();
+    }
+
+    private AcademicTerm resolveTerm(UUID termId) {
+        if (termId != null) {
+            return termRepository.findById(termId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Academic term not found"));
+        }
+        return termRepository.findByStatus(TermStatus.ACTIVE).stream().findFirst()
+                .orElseThrow(() -> new ResourceNotFoundException("No active academic term found"));
+    }
+
+    private LecturerResponse toLecturerResponse(Staff staff,
+                                                List<StaffPositionAssignment> positionAssignments,
+                                                List<TeachingAssignment> assignments) {
+        LocalDate today = LocalDate.now();
+        List<String> activePositions = positionAssignments.stream()
+                .filter(pa -> !pa.getStartDate().isAfter(today)
+                        && (pa.getEndDate() == null || !pa.getEndDate().isBefore(today)))
+                .map(pa -> pa.getPosition().getPositionName())
+                .distinct()
+                .toList();
+        if (!activePositions.contains("LECTURER")) {
+            return null;
+        }
+        if (!"STAFF".equalsIgnoreCase(staff.getUser().getRole().getRoleName())) {
+            return null;
+        }
+
+        Map<UUID, AssignedCourseResponse> byCourse = new LinkedHashMap<>();
+        for (TeachingAssignment ta : assignments) {
+            Course course = ta.getCourse();
+            AssignedCourseResponse courseResponse = byCourse.computeIfAbsent(course.getCourseId(), cid ->
+                    new AssignedCourseResponse(course.getCourseId(), course.getCourseCode(), course.getCourseName(),
+                            course.getSemester() != null ? course.getSemester().getSemesterId() : null,
+                            course.getSemester() != null ? course.getSemester().getSemesterNo() : null,
+                            new ArrayList<>()));
+            courseResponse.sections().add(new SectionInfoResponse(
+                    ta.getSection().getSectionId(), ta.getSection().getSectionName()));
+        }
+        List<AssignedCourseResponse> assignedCourses = byCourse.values().stream()
+                .map(c -> new AssignedCourseResponse(c.courseId(), c.courseCode(), c.courseName(),
+                        c.semesterId(), c.semesterNo(),
+                        c.sections().stream()
+                                .sorted(Comparator.comparing(SectionInfoResponse::sectionName))
+                                .toList()))
+                .sorted(Comparator.comparing(AssignedCourseResponse::courseCode))
+                .toList();
+
+        return new LecturerResponse(
+                staff.getStaffId(), staff.getStaffNo(), staff.getStaffName(),
+                staff.getUser().getEmail(), staff.getPhoneNo(),
+                staff.getUnit() != null ? staff.getUnit().getUnitId() : null,
+                staff.getUnit() != null ? staff.getUnit().getUnitName() : null,
+                activePositions,
+                assignedCourses.size(),
+                assignedCourses);
+    }
+
     // ---------- Teaching assignments ----------
 
     public List<TeachingAssignmentResponse> getTeachingAssignments(UUID staffId) {
@@ -175,14 +271,18 @@ public class StaffService {
                 .orElseThrow(() -> new ResourceNotFoundException("Staff member not found"));
     }
 
-    static StaffResponse toResponse(Staff staff) {
+    static StaffResponse toResponse(Staff staff, List<StaffPositionAssignment> positionAssignments) {
+        List<String> positions = positionAssignments.stream()
+                .map(pa -> pa.getPosition().getPositionName())
+                .toList();
         return new StaffResponse(
                 staff.getStaffId(), staff.getUser().getUserId(),
                 staff.getStaffNo(), staff.getStaffName(), staff.getPhoneNo(),
                 staff.getBatchYear(), staff.getAddress(),
                 staff.getUnit() != null ? staff.getUnit().getUnitId() : null,
                 staff.getUnit() != null ? staff.getUnit().getUnitName() : null,
-                staff.getJoinedAt(), staff.getLeftDate(), staff.getCreatedAt());
+                staff.getJoinedAt(), staff.getLeftDate(), staff.getCreatedAt(),
+                positions);
     }
 
     static StaffPositionAssignmentResponse toResponse(StaffPositionAssignment assignment) {

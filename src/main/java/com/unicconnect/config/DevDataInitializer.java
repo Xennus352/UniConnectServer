@@ -166,12 +166,12 @@ public class DevDataInitializer implements CommandLineRunner {
     private void seedAcademicTerm() {
         if (termRepository.findByStatus(TermStatus.ACTIVE).isEmpty()) {
             AcademicTerm term = new AcademicTerm();
-            term.setAcademicYear(2026);
-            term.setStartDate(LocalDate.of(2026, 1, 1));
-            term.setEndDate(LocalDate.of(2026, 12, 31));
+            term.setAcademicYear("2025-2026");
+            term.setStartDate(LocalDate.of(2025, 9, 1));
+            term.setEndDate(LocalDate.of(2026, 8, 31));
             term.setStatus(TermStatus.ACTIVE);
             termRepository.save(term);
-            log.info("Academic term 2026 created");
+            log.info("Academic term 2025-2026 created");
         } else {
             log.info("Active academic term already exists");
         }
@@ -231,6 +231,12 @@ public class DevDataInitializer implements CommandLineRunner {
         OrganizationalUnit saUnit = unitRepository.findByUnitCode("SA").orElse(null);
         OrganizationalUnit finUnit = unitRepository.findByUnitCode("FIN").orElse(null);
         OrganizationalUnit admUnit = unitRepository.findByUnitCode("ADM").orElse(null);
+        OrganizationalUnit cstUnit = unitRepository.findByUnitCode("CST").orElse(null);
+        OrganizationalUnit isUnit = unitRepository.findByUnitCode("IS").orElse(null);
+        OrganizationalUnit itsmUnit = unitRepository.findByUnitCode("ITSM").orElse(null);
+        OrganizationalUnit compUnit = unitRepository.findByUnitCode("COMP").orElse(null);
+        OrganizationalUnit nlUnit = unitRepository.findByUnitCode("NL").orElse(null);
+        OrganizationalUnit nsUnit = unitRepository.findByUnitCode("NS").orElse(null);
 
         Position lecturerPos = positionRepository.findByPositionName("LECTURER").orElse(null);
         Position hodPos = positionRepository.findByPositionName("HOD").orElse(null);
@@ -253,6 +259,86 @@ public class DevDataInitializer implements CommandLineRunner {
                 staffRole);
 
         staff("STF003", "dawsandar@gmail.com", "Daw Sandar", "09-3333333", csUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        // ── Lecturers (CST faculty) ─────────────────────────────
+        staff("STF013", "dawmoe@gmail.com", "Daw Moe", "09-4040404", cstUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1)),
+                        new PosAssign(hodPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF014", "aungkyaw@gmail.com", "U Aung Kyaw", "09-5050505", cstUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF015", "dawthida@gmail.com", "Daw Thida", "09-6060606", cstUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        // ── Lecturers (FIS) ─────────────────────────────────────
+        staff("STF016", "htetnaing@gmail.com", "U Htet Naing", "09-7070707", isUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1)),
+                        new PosAssign(hodPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF017", "dawsusu@gmail.com", "Daw Su Su", "09-8080808", isUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF018", "kyawmin@gmail.com", "U Kyaw Min", "09-9090909", isUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        // ── Lecturers (ITSM) ────────────────────────────────────
+        staff("STF019", "minzaw@gmail.com", "U Min Zaw", "09-1112222", itsmUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1)),
+                        new PosAssign(hodPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF020", "yeemon@gmail.com", "Daw Yee Mon", "09-2223333", itsmUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF021", "soewin@gmail.com", "U Soe Win", "09-3334444", itsmUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        // ── Lecturers (Computing) ───────────────────────────────
+        staff("STF022", "myintthein@gmail.com", "U Myint Thein", "09-4445555", compUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1)),
+                        new PosAssign(hodPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF023", "chawchaw@gmail.com", "Daw Chaw Chaw", "09-5556666", compUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF024", "thura@gmail.com", "U Thura", "09-6667777", compUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        // ── Lecturers (Natural Language) ────────────────────────
+        staff("STF025", "khinkhin@gmail.com", "Daw Khin Khin", "09-7778888", nlUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1)),
+                        new PosAssign(hodPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF026", "aungmin@gmail.com", "U Aung Min", "09-8889999", nlUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF027", "hninwai@gmail.com", "Daw Hnin Wai", "09-9990000", nlUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        // ── Lecturers (Natural Science) ─────────────────────────
+        staff("STF028", "phyothura@gmail.com", "U Phyo Thura", "09-1212121", nsUnit,
+                List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1)),
+                        new PosAssign(hodPos, LocalDate.of(2024, 1, 1))),
+                staffRole);
+
+        staff("STF029", "nilar@gmail.com", "Daw Nilar", "09-3232323", nsUnit,
                 List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
                 staffRole);
 
@@ -309,7 +395,7 @@ public class DevDataInitializer implements CommandLineRunner {
                 List.of(new PosAssign(lecturerPos, LocalDate.of(2024, 1, 1))),
                 staffRole);
 
-        log.info("Staff seeded (13 total: 3 lecturers, 3 student affairs, 3 finance, 3 administration, 1 admin)");
+        log.info("Staff seeded (30 total: 20 lecturers, 3 student affairs, 3 finance, 3 administration, 1 admin)");
     }
 
     private Staff staff(String staffNo, String email, String name, String phone,
@@ -359,6 +445,11 @@ public class DevDataInitializer implements CommandLineRunner {
     // ── Students ───────────────────────────────────────────────
 
     private void seedStudents() {
+        if (studentRepository.count() > 0) {
+            log.info("Students already present ({}), skipping student seed", studentRepository.count());
+            return;
+        }
+
         Role studentRole = roleRepository.findByRoleName("STUDENT")
                 .orElseThrow(() -> new RuntimeException("STUDENT role not found"));
 
@@ -374,65 +465,78 @@ public class DevDataInitializer implements CommandLineRunner {
         Map<String, Major> majors = new HashMap<>();
         majorRepository.findAll().forEach(m -> majors.put(m.getMajorCode(), m));
 
-        // Pre-load existing emails and roll numbers to avoid per-record DB checks
         Set<String> existingEmails = new HashSet<>(userRepository.findAll()
                 .stream().map(User::getEmail).toList());
-        Set<String> existingRollNos = new HashSet<>(studentRepository.findAll()
-                .stream().map(Student::getRollNo).toList());
+        Set<String> usedBases = new HashSet<>();
+        existingEmails.forEach(e -> usedBases.add(e.toLowerCase().replaceAll("[^a-z]", "")));
 
-        int totalStudents = 0;
-        int studentCounter = 0;
+        String[] namePool = {
+            "Kyaw Kyaw","Aung Aung","Min Min","Ko Ko","Htet Htet","Mya Mya","Su Su","Thiri Win",
+            "Aung Min","Kyaw Zin","Zaw Zaw","Nay Nay","Bo Bo","Thet Thet","Ei Ei","Hnin Hnin",
+            "Khin Khin","May May","Yamin","Zin Zin","Phyu Phyu","Sandi","Wai Wai","Linn Linn",
+            "Thant Zin","Hla Hla","Cho Cho","Nilar","Moe Moe","Aye Aye","Htet Aung","Kyaw Thu",
+            "Zin Mar","Hnin Wai","Su Thiri","Aye Mya","Thandar","Khin Sandar","Nyein Nyein",
+            "Zin Myo","Min Thu","Aung Ko","Kyaw Swar","Htet Lin","Wai Yan","Phyo Phyo","Thiha",
+            "Kaung Kaung","Sithu","Myint Myint","Htet Naing","Aung Myo","Kyaw Min","Zar Ni",
+            "Pyae Phyo","Naing Naing","Htun Htun","Thein Thein","San San","Aye Chan","Min Khant",
+            "Ko Zaw","Aung Kyaw","Ye Ye","Kaung Myat","Thura","Zaw Min","Min Zaw","Htoo Htoo","Sai Sai"
+        };
+        Map<String, Integer> baseCounter = new HashMap<>();
+        for (String base : usedBases) baseCounter.put(base, 100);
 
         int[] semestersToSeed = {2, 4, 6, 8};
         String[] sectionNames = {"A", "B", "C"};
         String[] majorCodes = {"CS", "CT", "CST"};
 
+        int rollNumber = 1001;
+        Set<String> usedRolls = new HashSet<>(studentRepository.findAll()
+                .stream().map(Student::getRollNo).toList());
+        int totalStudents = 0;
+
         for (int sem : semestersToSeed) {
-            for (String secName : sectionNames) {
-                for (String majorCode : majorCodes) {
-                    for (int i = 1; i <= 20; i++) {
-                        studentCounter++;
-                        String email = String.format("student.sem%d.%s.%03d@gmail.com",
-                                sem, secName.toLowerCase(), i);
-                        String rollNo = String.format("UCSTGO-%d-%s%s%03d",
-                                sem, majorCode, secName, i);
+            for (int i = 0; i < 60; i++) {
+                String secName = sectionNames[i % 3];
+                String majorCode = majorCodes[(i / 3) % 3];
+                String name = namePool[totalStudents % namePool.length];
+                String base = name.toLowerCase().replaceAll("[^a-z]", "");
+                int counter = baseCounter.merge(base, 100, Math::max);
+                String email;
+                do {
+                    email = String.format("%s%d@gmail.com", base, counter++);
+                } while (existingEmails.contains(email));
+                baseCounter.put(base, counter);
+                existingEmails.add(email);
 
-                        if (existingEmails.contains(email) || existingRollNos.contains(rollNo)) {
-                            continue;
-                        }
+                String rollNo;
+                do {
+                    rollNo = String.format("UCSTGO-%04d", rollNumber++);
+                } while (usedRolls.contains(rollNo));
+                usedRolls.add(rollNo);
 
-                        String studentName = String.format("Student %s %d-%s-%03d",
-                                majorCode, sem, secName, i);
+                User user = new User();
+                user.setEmail(email);
+                user.setPasswordHash(passwordEncoder.encode(STUDENT_PASSWORD));
+                user.setRole(studentRole);
+                user.setActive(true);
+                user.setRegistrationStatus(RegistrationStatus.APPROVED);
+                user = userRepository.save(user);
 
-                        User user = new User();
-                        user.setEmail(email);
-                        user.setPasswordHash(passwordEncoder.encode(STUDENT_PASSWORD));
-                        user.setRole(studentRole);
-                        user.setActive(true);
-                        user.setRegistrationStatus(RegistrationStatus.APPROVED);
-                        user = userRepository.save(user);
-                        existingEmails.add(email);
+                Student student = new Student();
+                student.setUser(user);
+                student.setMajor(majors.get(majorCode));
+                student.setSemester(semesters.get(sem));
+                student.setSection(sections.get(secName));
+                student.setTerm(term);
+                student.setRollNo(rollNo);
+                student.setStudentName(name);
+                student.setPhoneNo(String.format("09-%07d", totalStudents + 1));
+                student.setBirthYear(2000 + (8 - sem));
+                studentRepository.save(student);
 
-                        Student student = new Student();
-                        student.setUser(user);
-                        student.setMajor(majors.get(majorCode));
-                        student.setSemester(semesters.get(sem));
-                        student.setSection(sections.get(secName));
-                        student.setTerm(term);
-                        student.setRollNo(rollNo);
-                        student.setStudentName(studentName);
-                        student.setPhoneNo(String.format("09-%07d", studentCounter));
-                        student.setBirthYear(2000 + (8 - sem));
-                        studentRepository.save(student);
-                        existingRollNos.add(rollNo);
-
-                        totalStudents++;
-                    }
-                }
+                totalStudents++;
             }
         }
 
-        log.info("Students seeded: {} total across semesters 2,4,6,8 x sections A,B,C x majors CS,CT,CST (20 each)",
-                totalStudents);
+        log.info("Students seeded: {} total across semesters 2,4,6,8 x sections A,B,C x majors CS,CT,CST (balanced)", totalStudents);
     }
 }

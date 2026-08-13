@@ -2,6 +2,7 @@ package com.unicconnect.controller;
 
 import com.unicconnect.dto.request.StaffPositionAssignmentRequest;
 import com.unicconnect.dto.request.StaffRequest;
+import com.unicconnect.dto.response.LecturerResponse;
 import com.unicconnect.dto.response.StaffPositionAssignmentResponse;
 import com.unicconnect.dto.response.StaffResponse;
 import com.unicconnect.dto.response.TeachingAssignmentResponse;
@@ -26,6 +27,12 @@ public class StaffController {
     @GetMapping
     public ResponseEntity<List<StaffResponse>> getAll() {
         return ResponseEntity.ok(service.getAll());
+    }
+
+    @GetMapping("/lecturers")
+    public ResponseEntity<List<LecturerResponse>> getLecturers(
+            @RequestParam(required = false) UUID termId) {
+        return ResponseEntity.ok(service.getLecturers(termId));
     }
 
     @GetMapping("/{staffId}")
