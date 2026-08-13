@@ -1,0 +1,86 @@
+package com.unicconnect.controller;
+
+import com.unicconnect.dto.request.StaffPositionAssignmentRequest;
+import com.unicconnect.dto.request.StaffRequest;
+import com.unicconnect.dto.response.StaffPositionAssignmentResponse;
+import com.unicconnect.dto.response.StaffResponse;
+import com.unicconnect.dto.response.TeachingAssignmentResponse;
+import com.unicconnect.service.StaffService;
+import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/staff")
+public class StaffController {
+
+    private final StaffService service;
+
+    public StaffController(StaffService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public ResponseEntity<List<StaffResponse>> getAll() {
+        return ResponseEntity.ok(service.getAll());
+    }
+
+    @GetMapping("/{staffId}")
+    public ResponseEntity<StaffResponse> getById(@PathVariable UUID staffId) {
+        return ResponseEntity.ok(service.getById(staffId));
+    }
+
+    @PostMapping
+    public ResponseEntity<StaffResponse> create(@Valid @RequestBody StaffRequest request) {
+        return ResponseEntity.ok(service.create(request));
+    }
+
+    @PutMapping("/{staffId}")
+    public ResponseEntity<StaffResponse> update(@PathVariable UUID staffId,
+                                                @Valid @RequestBody StaffRequest request) {
+        return ResponseEntity.ok(service.update(staffId, request));
+    }
+
+    @DeleteMapping("/{staffId}")
+    public ResponseEntity<Void> delete(@PathVariable UUID staffId) {
+        service.delete(staffId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{staffId}/position-assignments")
+    public ResponseEntity<List<StaffPositionAssignmentResponse>> getPositionAssignments(
+            @PathVariable UUID staffId) {
+        return ResponseEntity.ok(service.getPositionAssignments(staffId));
+    }
+
+    @PostMapping("/{staffId}/position-assignments")
+    public ResponseEntity<StaffPositionAssignmentResponse> assignPosition(
+            @PathVariable UUID staffId,
+            @Valid @RequestBody StaffPositionAssignmentRequest request) {
+        return ResponseEntity.ok(service.assignPosition(staffId, request));
+    }
+
+    @PutMapping("/{staffId}/position-assignments/{assignmentId}")
+    public ResponseEntity<StaffPositionAssignmentResponse> updatePositionAssignment(
+            @PathVariable UUID staffId,
+            @PathVariable UUID assignmentId,
+            @Valid @RequestBody StaffPositionAssignmentRequest request) {
+        return ResponseEntity.ok(service.updatePositionAssignment(staffId, assignmentId, request));
+    }
+
+    @DeleteMapping("/{staffId}/position-assignments/{assignmentId}")
+    public ResponseEntity<Void> removePositionAssignment(@PathVariable UUID staffId,
+                                                         @PathVariable UUID assignmentId) {
+        service.removePositionAssignment(staffId, assignmentId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{staffId}/teaching-assignments")
+    public ResponseEntity<List<TeachingAssignmentResponse>> getTeachingAssignments(
+            @PathVariable UUID staffId) {
+        return ResponseEntity.ok(service.getTeachingAssignments(staffId));
+    }
+}

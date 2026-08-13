@@ -1,75 +1,51 @@
 package com.unicconnect.controller;
 
-import com.unicconnect.dto.*;
+import com.unicconnect.dto.request.LoginRequest;
+import com.unicconnect.dto.request.RefreshTokenRequest;
+import com.unicconnect.dto.response.AuthResponse;
 import com.unicconnect.service.AuthService;
-import com.unicconnect.service.UserService;
-import jakarta.servlet.http.Cookie;
+import com.unicconnect.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
-import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
 
     private final AuthService authService;
-    private final UserService userService;
+    private final SecurityUtil securityUtil;
 
-    public AuthController(AuthService authService, UserService userService) {
+    public AuthController(AuthService authService, SecurityUtil securityUtil) {
         this.authService = authService;
-        this.userService = userService;
+        this.securityUtil = securityUtil;
     }
 
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request,
-                                              HttpServletRequest httpRequest,
-                                              HttpServletResponse httpResponse) {
+                                              HttpServletRequest httpRequest) {
         String deviceName = httpRequest.getHeader("User-Agent");
         String ipAddress = httpRequest.getRemoteAddr();
-
-        AuthResponse response = authService.login(request, deviceName, ipAddress);
-
-        ResponseCookie refreshCookie = ResponseCookie.from("refresh_token", response.getAccessToken())
-                .httpOnly(true)
-                .secure(true)
-                .path("/api/auth")
-                .maxAge(604800)
-                .sameSite("Lax")
-                .build();
-
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(authService.login(request, deviceName, ipAddress));
     }
 
     @PostMapping("/refresh")
-    public ResponseEntity<AuthResponse> refresh(@RequestBody java.util.Map<String, String> body) {
-        String refreshToken = body.get("refreshToken");
-        AuthResponse response = authService.refresh(refreshToken);
-        return ResponseEntity.ok(response);
-    }
-
-    @PostMapping("/change-password")
-    public ResponseEntity<ApiResponse> changePassword(@Valid @RequestBody ChangePasswordRequest request,
-                                                      Authentication authentication) {
-        Long userId = Long.parseLong((String) authentication.getPrincipal());
-        ApiResponse response = authService.changePassword(userId, request);
-        return ResponseEntity.ok(response);
+    public ResponseEntity<AuthResponse> refresh(@Valid @RequestBody RefreshTokenRequest request) {
+        return ResponseEntity.ok(authService.refresh(request));
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<ApiResponse> logout(Authentication authentication) {
-        Long userId = Long.parseLong((String) authentication.getPrincipal());
-        ApiResponse response = authService.logout(userId);
-        return ResponseEntity.ok(response);
+    public ResponseEntity<Map<String, String>> logout() {
+        authService.logout(securityUtil.currentUserId());
+        return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
     }
 
-    @GetMapping("/me")
-    public ResponseEntity<UserResponse> me(Authentication authentication) {
-        Long userId = Long.parseLong((String) authentication.getPrincipal());
-        UserResponse response = userService.getUserById(userId);
-        return ResponseEntity.ok(response);
+    @PostMapping("/logout-all")
+    public ResponseEntity<Map<String, String>> logoutAll() {
+        authService.logout(securityUtil.currentUserId());
+        return ResponseEntity.ok(Map.of("message", "All sessions logged out successfully"));
     }
 }

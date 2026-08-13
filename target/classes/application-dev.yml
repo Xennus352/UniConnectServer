@@ -1,0 +1,27 @@
+# ============================================================
+# Development profile – activates dev/test seed data
+# ============================================================
+# Start with:  ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+# Or:          java -jar app.jar --spring.profiles.active=dev
+# ============================================================
+
+spring:
+  datasource:
+    url: jdbc:postgresql://ep-aged-night-ayo79t27-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require
+    username: neondb_owner
+    password: npg_rBcki3bLJ7pa
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+logging:
+  level:
+    com.unicconnect: DEBUG
+    org.springframework.security: DEBUG

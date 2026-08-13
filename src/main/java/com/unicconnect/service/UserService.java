@@ -1,92 +1,106 @@
 package com.unicconnect.service;
 
-import com.unicconnect.dto.UserResponse;
-import com.unicconnect.model.*;
-import com.unicconnect.repository.StudentProfileRepository;
+import com.unicconnect.dto.request.UpdateMeRequest;
+import com.unicconnect.dto.request.UpdateUserRoleRequest;
+import com.unicconnect.dto.request.UpdateUserStatusRequest;
+import com.unicconnect.dto.response.UserResponse;
+import com.unicconnect.entity.Role;
+import com.unicconnect.entity.User;
+import com.unicconnect.exception.DuplicateResourceException;
+import com.unicconnect.exception.ResourceNotFoundException;
+import com.unicconnect.exception.ValidationException;
+import com.unicconnect.repository.RoleRepository;
 import com.unicconnect.repository.UserRepository;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.UUID;
 
 @Service
+@Transactional(readOnly = true)
 public class UserService {
 
     private final UserRepository userRepository;
-    private final StudentProfileRepository studentProfileRepository;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    public UserService(UserRepository userRepository, StudentProfileRepository studentProfileRepository) {
+    public UserService(UserRepository userRepository, RoleRepository roleRepository, PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
-        this.studentProfileRepository = studentProfileRepository;
+        this.roleRepository = roleRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     public List<UserResponse> getAllUsers() {
-        return userRepository.findAll().stream()
-                .map(this::toDetailedResponse)
-                .collect(Collectors.toList());
+        return userRepository.findAll().stream().map(UserService::toResponse).toList();
     }
 
-    public UserResponse getUserById(Long id) {
-        User user = userRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
-        return toDetailedResponse(user);
+    public UserResponse getUserById(UUID userId) {
+        return toResponse(findUser(userId));
     }
 
-    public List<UserResponse> getUsersByRole(String role) {
-        UserRole userRole = UserRole.valueOf(role);
-        return userRepository.findByRole(userRole).stream()
-                .map(this::toResponse)
-                .collect(Collectors.toList());
+    public UserResponse getMe(UUID userId) {
+        return toResponse(findUser(userId));
     }
 
-    public List<UserResponse> getUsersByRoleDetailed(String role) {
-        UserRole userRole = UserRole.valueOf(role);
-        return userRepository.findByRole(userRole).stream()
-                .map(this::toDetailedResponse)
-                .collect(Collectors.toList());
-    }
+    @Transactional
+    public UserResponse updateMe(UUID userId, UpdateMeRequest request) {
+        User user = findUser(userId);
 
-    public List<UserResponse> getUsersByDepartment(Long departmentId) {
-        return userRepository.findByDepartmentId(departmentId).stream()
-                .map(this::toResponse)
-                .collect(Collectors.toList());
-    }
-
-    public List<UserResponse> getUsersByDepartmentDetailed(Long departmentId) {
-        return userRepository.findByDepartmentId(departmentId).stream()
-                .map(this::toDetailedResponse)
-                .collect(Collectors.toList());
-    }
-
-    private UserResponse toResponse(User user) {
-        UserResponse resp = new UserResponse();
-        resp.setId(user.getId());
-        resp.setEmail(user.getEmail());
-        resp.setFullName(user.getFullName());
-        resp.setRole(user.getRole().name());
-        resp.setDepartmentId(user.getDepartment() != null ? user.getDepartment().getId() : null);
-        resp.setDepartmentName(user.getDepartment() != null ? user.getDepartment().getName() : null);
-        resp.setRegistrationStatus(user.getRegistrationStatus().name());
-        resp.setIsActive(user.getIsActive());
-        resp.setMustChangePassword(user.getMustChangePassword());
-        resp.setLastLogin(user.getLastLogin());
-        resp.setCreatedAt(user.getCreatedAt());
-        return resp;
-    }
-
-    private UserResponse toDetailedResponse(User user) {
-        UserResponse resp = toResponse(user);
-
-        if (user.getRole() == UserRole.STUDENT) {
-            studentProfileRepository.findById(user.getId()).ifPresent(profile -> {
-                resp.setStudentIdNumber(profile.getStudentIdNumber());
-                resp.setBatchYear(profile.getBatchYear());
-                resp.setAcademicYear(profile.getAcademicYear());
-                resp.setSection(profile.getSection());
-            });
+        if (request.email() != null && !request.email().isBlank() && !request.email().equals(user.getEmail())) {
+            if (userRepository.existsByEmail(request.email())) {
+                throw new DuplicateResourceException("Email is already in use");
+            }
+            user.setEmail(request.email());
         }
 
-        return resp;
+        if (request.newPassword() != null && !request.newPassword().isBlank()) {
+            if (request.currentPassword() == null
+                    || !passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+                throw new ValidationException("Current password is incorrect");
+            }
+            user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        }
+
+        return toResponse(userRepository.save(user));
+    }
+
+    @Transactional
+    public UserResponse updateStatus(UUID userId, UpdateUserStatusRequest request) {
+        User user = findUser(userId);
+        if (request.isActive() != null) {
+            user.setActive(request.isActive());
+        }
+        if (request.registrationStatus() != null) {
+            user.setRegistrationStatus(request.registrationStatus());
+        }
+        return toResponse(userRepository.save(user));
+    }
+
+    @Transactional
+    public UserResponse updateRole(UUID userId, UpdateUserRoleRequest request) {
+        User user = findUser(userId);
+        Role role = roleRepository.findById(request.roleId())
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+        user.setRole(role);
+        return toResponse(userRepository.save(user));
+    }
+
+    public User findUser(UUID userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    }
+
+    static UserResponse toResponse(User user) {
+        return new UserResponse(
+                user.getUserId(),
+                user.getEmail(),
+                user.getRole().getRoleName(),
+                user.isActive(),
+                user.getRegistrationStatus(),
+                user.getLastLogin(),
+                user.getCreatedAt()
+        );
     }
 }

@@ -1,35 +1,53 @@
 package com.unicconnect.controller;
 
-import com.unicconnect.rmi.dto.AttendanceSummaryDto;
+import com.unicconnect.dto.request.MarkAttendanceRequest;
+import com.unicconnect.dto.request.UpdateAttendanceRequest;
+import com.unicconnect.dto.response.AttendanceResponse;
 import com.unicconnect.service.AttendanceService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/attendance")
 public class AttendanceController {
 
-    private final AttendanceService attendanceService;
+    private final AttendanceService service;
 
-    public AttendanceController(AttendanceService attendanceService) {
-        this.attendanceService = attendanceService;
+    public AttendanceController(AttendanceService service) {
+        this.service = service;
     }
 
-    @GetMapping("/{studentId}")
-    public ResponseEntity<List<AttendanceSummaryDto>> getAttendance(@PathVariable Long studentId) {
-        return ResponseEntity.ok(attendanceService.getAttendance(studentId));
+    @GetMapping
+    public ResponseEntity<List<AttendanceResponse>> getAll(
+            @RequestParam UUID sessionId) {
+        return ResponseEntity.ok(service.getAll(sessionId));
     }
 
-    @GetMapping("/calculate/{studentId}/{subjectCode}")
-    public ResponseEntity<AttendanceSummaryDto> calculateAttendance(
-            @PathVariable Long studentId, @PathVariable String subjectCode) {
-        return ResponseEntity.ok(attendanceService.calculateAttendance(studentId, subjectCode));
+    @GetMapping("/{attendanceId}")
+    public ResponseEntity<AttendanceResponse> getById(@PathVariable UUID attendanceId) {
+        return ResponseEntity.ok(service.getById(attendanceId));
     }
 
-    @GetMapping("/below75")
-    public ResponseEntity<List<AttendanceSummaryDto>> getStudentsBelow75() {
-        return ResponseEntity.ok(attendanceService.getStudentsBelow75());
+    @PostMapping("/{sessionId}/mark")
+    public ResponseEntity<List<AttendanceResponse>> markAttendance(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody MarkAttendanceRequest request) {
+        return ResponseEntity.ok(service.markAttendance(sessionId, request));
+    }
+
+    @PutMapping("/{attendanceId}")
+    public ResponseEntity<AttendanceResponse> update(@PathVariable UUID attendanceId,
+                                                     @Valid @RequestBody UpdateAttendanceRequest request) {
+        return ResponseEntity.ok(service.update(attendanceId, request));
+    }
+
+    @DeleteMapping("/{attendanceId}")
+    public ResponseEntity<Void> delete(@PathVariable UUID attendanceId) {
+        service.delete(attendanceId);
+        return ResponseEntity.noContent().build();
     }
 }
