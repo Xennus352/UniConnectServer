@@ -104,25 +104,6 @@ public class UserService {
     }
 
     @Transactional
-    public UserResponse createUser(CreateUserRequest request) {
-        if (userRepository.existsByEmail(request.email())) {
-            throw new DuplicateResourceException("Email is already in use");
-        }
-
-        Role role = roleRepository.findByRoleName(request.roleName())
-                .orElseThrow(() -> new ValidationException("Role not found: " + request.roleName()));
-
-        User user = new User();
-        user.setEmail(request.email());
-        user.setPasswordHash(passwordEncoder.encode(request.password()));
-        user.setRole(role);
-        user.setActive(true);
-        user.setRegistrationStatus(RegistrationStatus.APPROVED);
-
-        return toResponse(userRepository.save(user));
-    }
-
-    @Transactional
     public UserResponse updateRole(UUID userId, UpdateUserRoleRequest request) {
         User user = findUser(userId);
         Role role = roleRepository.findById(request.roleId())
