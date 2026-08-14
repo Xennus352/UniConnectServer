@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 com\unicconnect\entity\StaffPositionAssignment.class
 com\unicconnect\security\JwtAuthenticationFilter.class
 com\unicconnect\exception\ResourceNotFoundException.class
@@ -168,3 +169,6 @@ com\unicconnect\dto\request\TimeSlotRequest.class
 com\unicconnect\repository\MajorRepository.class
 com\unicconnect\dto\request\OrganizationalUnitRequest.class
 com\unicconnect\entity\Major.class
+=======
+com/unicconnect/dto/request/CreateUserRequest.class
+>>>>>>> 2b36b09 (http issues)

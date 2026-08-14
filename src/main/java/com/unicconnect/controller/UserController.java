@@ -33,7 +33,11 @@ public class UserController {
 
     @PostMapping
     public ResponseEntity<UserResponse> create(@Valid @RequestBody CreateUserRequest request) {
+<<<<<<< HEAD
         return ResponseEntity.ok(userService.createUser(request));
+=======
+        return ResponseEntity.status(201).body(userService.createUser(request));
+>>>>>>> 2b36b09 (http issues)
     }
 
     @GetMapping("/me")

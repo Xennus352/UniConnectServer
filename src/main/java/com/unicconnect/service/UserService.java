@@ -38,6 +38,22 @@ public class UserService {
         return userRepository.findAll().stream().map(UserService::toResponse).toList();
     }
 
+    @Transactional
+    public UserResponse createUser(CreateUserRequest request) {
+        if (userRepository.existsByEmail(request.email().toLowerCase())) {
+            throw new DuplicateResourceException("Email is already in use");
+        }
+        Role role = roleRepository.findByRoleName(request.roleName())
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found: " + request.roleName()));
+        User user = new User();
+        user.setEmail(request.email().toLowerCase());
+        user.setPasswordHash(passwordEncoder.encode(request.password()));
+        user.setRole(role);
+        user.setActive(request.isActive() == null || request.isActive());
+        user.setRegistrationStatus(RegistrationStatus.APPROVED);
+        return toResponse(userRepository.save(user));
+    }
+
     public UserResponse getUserById(UUID userId) {
         return toResponse(findUser(userId));
     }
