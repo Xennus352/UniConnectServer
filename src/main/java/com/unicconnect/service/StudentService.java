@@ -1,15 +1,21 @@
 package com.unicconnect.service;
 
+import com.unicconnect.dto.request.CreateStudentUserRequest;
 import com.unicconnect.dto.request.StudentRequest;
 import com.unicconnect.dto.response.AttendanceResponse;
 import com.unicconnect.dto.response.ResultDocumentResponse;
+import com.unicconnect.dto.response.ScheduleResponse;
 import com.unicconnect.dto.response.StudentResponse;
+import com.unicconnect.entity.RegistrationStatus;
 import com.unicconnect.entity.Student;
+import com.unicconnect.entity.TermStatus;
+import com.unicconnect.entity.User;
 import com.unicconnect.exception.DuplicateResourceException;
 import com.unicconnect.exception.ResourceNotFoundException;
 import com.unicconnect.exception.ValidationException;
 import com.unicconnect.repository.*;
 import com.unicconnect.util.SecurityUtil;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +35,9 @@ public class StudentService {
     private final AttendanceRepository attendanceRepository;
     private final ExamResultDocumentRepository resultDocumentRepository;
     private final SecurityUtil securityUtil;
+    private final ClassScheduleRepository classScheduleRepository;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
 
     public StudentService(StudentRepository studentRepository,
                           UserRepository userRepository,
@@ -38,7 +47,10 @@ public class StudentService {
                           AcademicTermRepository termRepository,
                           AttendanceRepository attendanceRepository,
                           ExamResultDocumentRepository resultDocumentRepository,
-                          SecurityUtil securityUtil) {
+                          SecurityUtil securityUtil,
+                          ClassScheduleRepository classScheduleRepository,
+                          RoleRepository roleRepository,
+                          PasswordEncoder passwordEncoder) {
         this.studentRepository = studentRepository;
         this.userRepository = userRepository;
         this.majorRepository = majorRepository;
@@ -48,6 +60,9 @@ public class StudentService {
         this.attendanceRepository = attendanceRepository;
         this.resultDocumentRepository = resultDocumentRepository;
         this.securityUtil = securityUtil;
+        this.classScheduleRepository = classScheduleRepository;
+        this.roleRepository = roleRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     public List<StudentResponse> getAll(UUID majorId, UUID semesterId, UUID sectionId, UUID termId) {
@@ -70,6 +85,24 @@ public class StudentService {
         return toResponse(findStudent(studentId));
     }
 
+    public List<ScheduleResponse> getSchedules(UUID studentId, UUID termId) {
+        Student student = findStudent(studentId);
+        if (student.getSection() == null) {
+            return List.of();
+        }
+        UUID effectiveTermId = termId;
+        if (effectiveTermId == null) {
+            effectiveTermId = termRepository.findByStatus(TermStatus.ACTIVE).stream()
+                    .findFirst()
+                    .orElseThrow(() -> new ResourceNotFoundException("No active academic term"))
+                    .getTermId();
+        }
+        return classScheduleRepository.findByTermAndSectionWithDetails(effectiveTermId, student.getSection().getSectionId())
+                .stream()
+                .map(ClassScheduleService::toResponse)
+                .toList();
+    }
+
     @Transactional
     public StudentResponse create(StudentRequest request) {
         if (studentRepository.existsByRollNo(request.rollNo())) {
@@ -80,6 +113,45 @@ public class StudentService {
         }
         Student student = new Student();
         apply(student, request);
+        return toResponse(studentRepository.save(student));
+    }
+
+    @Transactional
+    public StudentResponse createWithUser(CreateStudentUserRequest request) {
+        if (userRepository.existsByEmail(request.email().toLowerCase())) {
+            throw new DuplicateResourceException("Email is already in use");
+        }
+        if (studentRepository.existsByRollNo(request.rollNo())) {
+            throw new DuplicateResourceException("Roll number already exists: " + request.rollNo());
+        }
+
+        User user = new User();
+        user.setEmail(request.email().toLowerCase());
+        user.setPasswordHash(passwordEncoder.encode(request.password()));
+        user.setRole(roleRepository.findByRoleName("STUDENT")
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found: STUDENT")));
+        user.setActive(request.isActive() == null || request.isActive());
+        user.setRegistrationStatus(RegistrationStatus.APPROVED);
+        user = userRepository.save(user);
+
+        Student student = new Student();
+        student.setUser(user);
+        student.setMajor(majorRepository.findById(request.majorId())
+                .orElseThrow(() -> new ResourceNotFoundException("Major not found")));
+        student.setSemester(request.semesterId() != null
+                ? semesterRepository.findById(request.semesterId())
+                        .orElseThrow(() -> new ResourceNotFoundException("Semester not found")) : null);
+        student.setSection(request.sectionId() != null
+                ? sectionRepository.findById(request.sectionId())
+                        .orElseThrow(() -> new ResourceNotFoundException("Section not found")) : null);
+        student.setTerm(request.termId() != null
+                ? termRepository.findById(request.termId())
+                        .orElseThrow(() -> new ResourceNotFoundException("Academic term not found")) : null);
+        student.setRollNo(request.rollNo());
+        student.setStudentName(request.studentName());
+        student.setPhoneNo(request.phoneNo());
+        student.setAddress(request.address());
+        student.setBatchYear(request.batchYear());
         return toResponse(studentRepository.save(student));
     }
 
@@ -149,7 +221,7 @@ public class StudentService {
         student.setStudentName(request.studentName());
         student.setPhoneNo(request.phoneNo());
         student.setAddress(request.address());
-        student.setBirthYear(request.birthYear());
+        student.setBatchYear(request.batchYear());
     }
 
     public Student findStudent(UUID studentId) {
@@ -168,6 +240,6 @@ public class StudentService {
                 student.getTerm() != null ? student.getTerm().getTermId() : null,
                 student.getTerm() != null ? student.getTerm().getAcademicYear() : null,
                 student.getRollNo(), student.getStudentName(), student.getPhoneNo(),
-                student.getAddress(), student.getBirthYear(), student.getCreatedAt());
+                student.getAddress(), student.getBatchYear(), student.getCreatedAt());
     }
 }

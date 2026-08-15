@@ -1,13 +1,19 @@
 package com.unicconnect.controller;
 
+import com.unicconnect.dto.request.CreateStudentUserRequest;
 import com.unicconnect.dto.request.StudentRequest;
 import com.unicconnect.dto.response.AttendanceResponse;
+import com.unicconnect.dto.response.ImportResultResponse;
 import com.unicconnect.dto.response.ResultDocumentResponse;
+import com.unicconnect.dto.response.ScheduleResponse;
 import com.unicconnect.dto.response.StudentResponse;
+import com.unicconnect.service.ExcelImportService;
 import com.unicconnect.service.StudentService;
 import jakarta.validation.Valid;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -17,9 +23,16 @@ import java.util.UUID;
 public class StudentController {
 
     private final StudentService service;
+    private final ExcelImportService importService;
 
-    public StudentController(StudentService service) {
+    public StudentController(StudentService service, ExcelImportService importService) {
         this.service = service;
+        this.importService = importService;
+    }
+
+    @PostMapping(value = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ImportResultResponse> importExcel(@RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(importService.importStudents(file));
     }
 
     @GetMapping
@@ -41,6 +54,11 @@ public class StudentController {
         return ResponseEntity.ok(service.create(request));
     }
 
+    @PostMapping("/register")
+    public ResponseEntity<StudentResponse> register(@Valid @RequestBody CreateStudentUserRequest request) {
+        return ResponseEntity.ok(service.createWithUser(request));
+    }
+
     @PutMapping("/{studentId}")
     public ResponseEntity<StudentResponse> update(@PathVariable UUID studentId,
                                                   @Valid @RequestBody StudentRequest request) {
@@ -56,6 +74,12 @@ public class StudentController {
     @GetMapping("/{studentId}/attendance")
     public ResponseEntity<List<AttendanceResponse>> getAttendance(@PathVariable UUID studentId) {
         return ResponseEntity.ok(service.getAttendance(studentId));
+    }
+
+    @GetMapping("/{studentId}/schedules")
+    public ResponseEntity<List<ScheduleResponse>> getSchedules(@PathVariable UUID studentId,
+                                                               @RequestParam(required = false) UUID termId) {
+        return ResponseEntity.ok(service.getSchedules(studentId, termId));
     }
 
     @GetMapping("/{studentId}/results")

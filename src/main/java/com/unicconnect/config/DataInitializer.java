@@ -1,8 +1,10 @@
 package com.unicconnect.config;
 
+import com.unicconnect.entity.Position;
 import com.unicconnect.entity.RegistrationStatus;
 import com.unicconnect.entity.Role;
 import com.unicconnect.entity.User;
+import com.unicconnect.repository.PositionRepository;
 import com.unicconnect.repository.RoleRepository;
 import com.unicconnect.repository.UserRepository;
 import org.slf4j.Logger;
@@ -19,18 +21,22 @@ public class DataInitializer implements CommandLineRunner {
     private final RoleRepository roleRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final PositionRepository positionRepository;
 
     public DataInitializer(RoleRepository roleRepository,
                            UserRepository userRepository,
-                           PasswordEncoder passwordEncoder) {
+                           PasswordEncoder passwordEncoder,
+                           PositionRepository positionRepository) {
         this.roleRepository = roleRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.positionRepository = positionRepository;
     }
 
     @Override
     public void run(String... args) {
         seedRoles();
+        seedPositions();
         seedAdminUser();
     }
 
@@ -44,6 +50,28 @@ public class DataInitializer implements CommandLineRunner {
     private void createRoleIfNotExists(String roleName, String description) {
         if (!roleRepository.existsByRoleName(roleName)) {
             roleRepository.save(new Role(roleName, description));
+        }
+    }
+
+    private void seedPositions() {
+        createPositionIfNotExists("LECTURER", "Lecturer");
+        createPositionIfNotExists("HOD", "Head of Department");
+        createPositionIfNotExists("STUDENT_AFFAIRS_OFFICER", "Student Affairs Officer");
+        createPositionIfNotExists("FINANCE_OFFICER", "Finance Officer");
+        createPositionIfNotExists("ADMINISTRATIVE_OFFICER", "Administrative Officer");
+        createPositionIfNotExists("SENIOR_CLERK", "Senior Clerk");
+        createPositionIfNotExists("JUNIOR_CLERK", "Junior Clerk");
+        createPositionIfNotExists("RECTOR", "Rector");
+        createPositionIfNotExists("PRO_RECTOR", "Pro-Rector");
+        log.info("Positions seeded successfully");
+    }
+
+    private void createPositionIfNotExists(String positionName, String description) {
+        if (!positionRepository.existsByPositionName(positionName)) {
+            Position position = new Position();
+            position.setPositionName(positionName);
+            position.setDescription(description);
+            positionRepository.save(position);
         }
     }
 

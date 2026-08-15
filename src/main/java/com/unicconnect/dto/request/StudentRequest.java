@@ -15,5 +15,5 @@ public record StudentRequest(
         @NotBlank String studentName,
         String phoneNo,
         String address,
-        Integer birthYear
+        Integer batchYear
 ) {}

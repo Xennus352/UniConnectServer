@@ -55,13 +55,13 @@ public class ResultBatchService {
     public List<ResultBatchResponse> getAll(UUID termId, UUID semesterId, UUID examTypeId) {
         List<ResultBatch> batches;
         if (termId != null) {
-            batches = batchRepository.findByTerm_TermId(termId);
+            batches = batchRepository.findByTerm_TermIdWithDetails(termId);
         } else if (semesterId != null) {
-            batches = batchRepository.findBySemester_SemesterId(semesterId);
+            batches = batchRepository.findBySemester_SemesterIdWithDetails(semesterId);
         } else if (examTypeId != null) {
-            batches = batchRepository.findByExamType_ExamTypeId(examTypeId);
+            batches = batchRepository.findByExamType_ExamTypeIdWithDetails(examTypeId);
         } else {
-            batches = batchRepository.findAll();
+            batches = batchRepository.findAllWithDetails();
         }
         return batches.stream().map(ResultBatchService::toResponse).toList();
     }

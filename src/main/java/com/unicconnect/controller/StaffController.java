@@ -1,15 +1,20 @@
 package com.unicconnect.controller;
 
+import com.unicconnect.dto.request.CreateStaffUserRequest;
 import com.unicconnect.dto.request.StaffPositionAssignmentRequest;
 import com.unicconnect.dto.request.StaffRequest;
+import com.unicconnect.dto.response.ImportResultResponse;
 import com.unicconnect.dto.response.LecturerResponse;
 import com.unicconnect.dto.response.StaffPositionAssignmentResponse;
 import com.unicconnect.dto.response.StaffResponse;
 import com.unicconnect.dto.response.TeachingAssignmentResponse;
+import com.unicconnect.service.ExcelImportService;
 import com.unicconnect.service.StaffService;
 import jakarta.validation.Valid;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -19,9 +24,17 @@ import java.util.UUID;
 public class StaffController {
 
     private final StaffService service;
+    private final ExcelImportService importService;
 
-    public StaffController(StaffService service) {
+    public StaffController(StaffService service, ExcelImportService importService) {
         this.service = service;
+        this.importService = importService;
+    }
+
+    @PostMapping(value = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ImportResultResponse> importExcel(@RequestParam("file") MultipartFile file,
+                                                            @RequestParam String type) {
+        return ResponseEntity.ok(importService.importStaff(file, type));
     }
 
     @GetMapping
@@ -43,6 +56,11 @@ public class StaffController {
     @PostMapping
     public ResponseEntity<StaffResponse> create(@Valid @RequestBody StaffRequest request) {
         return ResponseEntity.ok(service.create(request));
+    }
+
+    @PostMapping("/register")
+    public ResponseEntity<StaffResponse> register(@Valid @RequestBody CreateStaffUserRequest request) {
+        return ResponseEntity.ok(service.createWithUser(request));
     }
 
     @PutMapping("/{staffId}")

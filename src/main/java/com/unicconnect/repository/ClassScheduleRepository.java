@@ -14,16 +14,35 @@ public interface ClassScheduleRepository extends JpaRepository<ClassSchedule, UU
 
     List<ClassSchedule> findByGeneration_GenerationId(UUID generationId);
 
-    @Query("SELECT s FROM ClassSchedule s JOIN s.generation g WHERE g.term.termId = :termId")
-    List<ClassSchedule> findByTermId(@Param("termId") UUID termId);
+    String FETCH_JOINS = " JOIN FETCH s.generation g"
+            + " LEFT JOIN FETCH s.teachingAssignment a"
+            + " LEFT JOIN FETCH a.course c"
+            + " LEFT JOIN FETCH a.staff st"
+            + " LEFT JOIN FETCH a.section sec"
+            + " JOIN FETCH s.startSlot"
+            + " JOIN FETCH s.endSlot";
 
-    @Query("SELECT s FROM ClassSchedule s JOIN s.teachingAssignment a WHERE a.section.sectionId = :sectionId")
-    List<ClassSchedule> findBySectionId(@Param("sectionId") UUID sectionId);
+    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS + " WHERE g.term.termId = :termId")
+    List<ClassSchedule> findByTermIdWithDetails(@Param("termId") UUID termId);
 
-    @Query("SELECT s FROM ClassSchedule s JOIN s.teachingAssignment a WHERE a.staff.staffId = :staffId")
-    List<ClassSchedule> findByStaffId(@Param("staffId") UUID staffId);
+    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS
+            + " WHERE a.section.sectionId = :sectionId")
+    List<ClassSchedule> findBySectionIdWithDetails(@Param("sectionId") UUID sectionId);
 
-    List<ClassSchedule> findByDayOfWeek(Integer dayOfWeek);
+    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS
+            + " WHERE a.staff.staffId = :staffId")
+    List<ClassSchedule> findByStaffIdWithDetails(@Param("staffId") UUID staffId);
+
+    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS + " WHERE s.dayOfWeek = :dayOfWeek")
+    List<ClassSchedule> findByDayOfWeekWithDetails(@Param("dayOfWeek") Integer dayOfWeek);
+
+    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS)
+    List<ClassSchedule> findAllWithDetails();
+
+    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS
+            + " WHERE g.term.termId = :termId AND sec.sectionId = :sectionId")
+    List<ClassSchedule> findByTermAndSectionWithDetails(@Param("termId") UUID termId,
+                                                        @Param("sectionId") UUID sectionId);
 
     boolean existsByGeneration_GenerationIdAndTeachingAssignment_Staff_StaffId(
             UUID generationId, UUID staffId);

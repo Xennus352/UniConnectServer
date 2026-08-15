@@ -84,11 +84,11 @@ public class DevDataInitializer implements CommandLineRunner {
 
     private void seedOrganizationalUnits() {
         String[][] units = {
-            {"CS", "Faculty of Computer Science", "ACADEMIC"},
-            {"CST", "Faculty of Computer Systems and Technologies", "ACADEMIC"},
-            {"IS", "Faculty of Information Science", "ACADEMIC"},
+            {"FCS", "Faculty of Computer Science", "ACADEMIC"},
+            {"FCST", "Faculty of Computer Systems and Technologies", "ACADEMIC"},
+            {"FIS", "Faculty of Information Science", "ACADEMIC"},
             {"ITSM", "Department of Information Technologies Support and Maintenance", "ACADEMIC"},
-            {"COMP", "Faculty of Computing", "ACADEMIC"},
+            {"FC", "Faculty of Computing", "ACADEMIC"},
             {"NL", "Department of Natural Language", "ACADEMIC"},
             {"NS", "Department of Natural Science", "ACADEMIC"},
             {"ADM", "Department of Administration", "ADMINISTRATIVE"},
@@ -139,14 +139,14 @@ public class DevDataInitializer implements CommandLineRunner {
     // ── Majors ─────────────────────────────────────────────────
 
     private void seedMajors() {
-        String csUnitCode = "CS";
+        String csUnitCode = "FCS";
         String[][] majors = {
             {"CS", "Computer Science"},
             {"CT", "Computer Technology"},
             {"CST", "Computer Systems and Technology"}
         };
         OrganizationalUnit csUnit = unitRepository.findByUnitCode(csUnitCode)
-                .orElseThrow(() -> new RuntimeException("CS unit not found"));
+                .orElseThrow(() -> new RuntimeException("FCS unit not found"));
 
         for (String[] m : majors) {
             List<Major> existing = majorRepository.findAll();
@@ -187,7 +187,9 @@ public class DevDataInitializer implements CommandLineRunner {
             {"FINANCE_OFFICER", "Finance Officer"},
             {"ADMINISTRATIVE_OFFICER", "Administrative Officer"},
             {"SENIOR_CLERK", "Senior Clerk"},
-            {"JUNIOR_CLERK", "Junior Clerk"}
+            {"JUNIOR_CLERK", "Junior Clerk"},
+            {"RECTOR", "Rector"},
+            {"PRO_RECTOR", "Pro-Rector"}
         };
         for (String[] p : positions) {
             if (!positionRepository.existsByPositionName(p[0])) {
@@ -227,14 +229,14 @@ public class DevDataInitializer implements CommandLineRunner {
         Role staffRole = roleRepository.findByRoleName("STAFF")
                 .orElseThrow(() -> new RuntimeException("STAFF role not found"));
 
-        OrganizationalUnit csUnit = unitRepository.findByUnitCode("CS").orElse(null);
+        OrganizationalUnit csUnit = unitRepository.findByUnitCode("FCS").orElse(null);
         OrganizationalUnit saUnit = unitRepository.findByUnitCode("SA").orElse(null);
         OrganizationalUnit finUnit = unitRepository.findByUnitCode("FIN").orElse(null);
         OrganizationalUnit admUnit = unitRepository.findByUnitCode("ADM").orElse(null);
-        OrganizationalUnit cstUnit = unitRepository.findByUnitCode("CST").orElse(null);
-        OrganizationalUnit isUnit = unitRepository.findByUnitCode("IS").orElse(null);
+        OrganizationalUnit cstUnit = unitRepository.findByUnitCode("FCST").orElse(null);
+        OrganizationalUnit isUnit = unitRepository.findByUnitCode("FIS").orElse(null);
         OrganizationalUnit itsmUnit = unitRepository.findByUnitCode("ITSM").orElse(null);
-        OrganizationalUnit compUnit = unitRepository.findByUnitCode("COMP").orElse(null);
+        OrganizationalUnit compUnit = unitRepository.findByUnitCode("FC").orElse(null);
         OrganizationalUnit nlUnit = unitRepository.findByUnitCode("NL").orElse(null);
         OrganizationalUnit nsUnit = unitRepository.findByUnitCode("NS").orElse(null);
 
@@ -530,7 +532,7 @@ public class DevDataInitializer implements CommandLineRunner {
                 student.setRollNo(rollNo);
                 student.setStudentName(name);
                 student.setPhoneNo(String.format("09-%07d", totalStudents + 1));
-                student.setBirthYear(2000 + (8 - sem));
+                student.setBatchYear(2000 + (8 - sem));
                 studentRepository.save(student);
 
                 totalStudents++;

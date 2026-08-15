@@ -2,6 +2,7 @@ package com.unicconnect.service;
 
 import com.unicconnect.dto.request.CreateUserRequest;
 import com.unicconnect.dto.request.UpdateMeRequest;
+import com.unicconnect.dto.request.UpdateUserRequest;
 import com.unicconnect.dto.request.UpdateUserRoleRequest;
 import com.unicconnect.dto.request.UpdateUserStatusRequest;
 import com.unicconnect.dto.response.UserResponse;
@@ -11,8 +12,14 @@ import com.unicconnect.entity.User;
 import com.unicconnect.exception.DuplicateResourceException;
 import com.unicconnect.exception.ResourceNotFoundException;
 import com.unicconnect.exception.ValidationException;
+import com.unicconnect.repository.RefreshTokenRepository;
 import com.unicconnect.repository.RoleRepository;
+import com.unicconnect.repository.StaffPositionAssignmentRepository;
+import com.unicconnect.repository.StaffRepository;
+import com.unicconnect.repository.StudentRepository;
 import com.unicconnect.repository.UserRepository;
+import com.unicconnect.util.SecurityUtil;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,15 +34,32 @@ public class UserService {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final StudentRepository studentRepository;
+    private final StaffRepository staffRepository;
+    private final StaffPositionAssignmentRepository assignmentRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final SecurityUtil securityUtil;
 
-    public UserService(UserRepository userRepository, RoleRepository roleRepository, PasswordEncoder passwordEncoder) {
+    public UserService(UserRepository userRepository,
+                       RoleRepository roleRepository,
+                       PasswordEncoder passwordEncoder,
+                       StudentRepository studentRepository,
+                       StaffRepository staffRepository,
+                       StaffPositionAssignmentRepository assignmentRepository,
+                       RefreshTokenRepository refreshTokenRepository,
+                       SecurityUtil securityUtil) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
+        this.studentRepository = studentRepository;
+        this.staffRepository = staffRepository;
+        this.assignmentRepository = assignmentRepository;
+        this.refreshTokenRepository = refreshTokenRepository;
+        this.securityUtil = securityUtil;
     }
 
     public List<UserResponse> getAllUsers() {
-        return userRepository.findAll().stream().map(UserService::toResponse).toList();
+        return userRepository.findAllWithRole().stream().map(UserService::toResponse).toList();
     }
 
     @Transactional
@@ -59,7 +83,7 @@ public class UserService {
     }
 
     public List<UserResponse> getUsersByRole(String roleName) {
-        return userRepository.findAll().stream()
+        return userRepository.findAllWithRole().stream()
                 .filter(u -> u.getRole().getRoleName().equalsIgnoreCase(roleName))
                 .map(UserService::toResponse)
                 .toList();
@@ -101,6 +125,50 @@ public class UserService {
             user.setRegistrationStatus(request.registrationStatus());
         }
         return toResponse(userRepository.save(user));
+    }
+
+    @Transactional
+    public UserResponse updateUser(UUID userId, UpdateUserRequest request) {
+        User user = findUser(userId);
+        if (request.email() != null && !request.email().isBlank() && !request.email().equals(user.getEmail())) {
+            if (userRepository.existsByEmail(request.email())) {
+                throw new DuplicateResourceException("Email is already in use");
+            }
+            user.setEmail(request.email());
+        }
+        if (request.isActive() != null) {
+            user.setActive(request.isActive());
+        }
+        return toResponse(userRepository.save(user));
+    }
+
+    @Transactional
+    public void deleteUser(UUID userId) {
+        User user = findUser(userId);
+        if (userId.equals(securityUtil.currentUserId())) {
+            throw new ValidationException("You cannot delete your own account");
+        }
+        try {
+            studentRepository.findByUser_UserId(userId).ifPresent(studentRepository::delete);
+            staffRepository.findByUser_UserId(userId).ifPresent(staff -> {
+                assignmentRepository.deleteAll(assignmentRepository.findByStaff_StaffId(staff.getStaffId()));
+                staffRepository.delete(staff);
+            });
+            refreshTokenRepository.deleteAll(refreshTokenRepository.findByUser(user));
+            userRepository.delete(user);
+            userRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            throw new ValidationException(
+                    "Cannot delete this account because it has related records "
+                            + "(e.g. attendance, results, or teaching assignments)");
+        }
+    }
+
+    @Transactional
+    public void deleteUsers(List<UUID> userIds) {
+        for (UUID userId : userIds) {
+            deleteUser(userId);
+        }
     }
 
     @Transactional

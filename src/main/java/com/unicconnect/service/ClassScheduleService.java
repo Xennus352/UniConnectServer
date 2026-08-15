@@ -36,15 +36,15 @@ public class ClassScheduleService {
     public List<ScheduleResponse> getAll(UUID termId, UUID sectionId, UUID staffId, Integer dayOfWeek) {
         List<ClassSchedule> schedules;
         if (termId != null) {
-            schedules = scheduleRepository.findByTermId(termId);
+            schedules = scheduleRepository.findByTermIdWithDetails(termId);
         } else if (sectionId != null) {
-            schedules = scheduleRepository.findBySectionId(sectionId);
+            schedules = scheduleRepository.findBySectionIdWithDetails(sectionId);
         } else if (staffId != null) {
-            schedules = scheduleRepository.findByStaffId(staffId);
+            schedules = scheduleRepository.findByStaffIdWithDetails(staffId);
         } else if (dayOfWeek != null) {
-            schedules = scheduleRepository.findByDayOfWeek(dayOfWeek);
+            schedules = scheduleRepository.findByDayOfWeekWithDetails(dayOfWeek);
         } else {
-            schedules = scheduleRepository.findAll();
+            schedules = scheduleRepository.findAllWithDetails();
         }
         return schedules.stream()
                 .sorted(Comparator.comparing(ClassSchedule::getDayOfWeek)

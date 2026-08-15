@@ -54,8 +54,8 @@ public class Student {
     @Column(name = "address")
     private String address;
 
-    @Column(name = "birth_year")
-    private Integer birthYear;
+    @Column(name = "batch_year")
+    private Integer batchYear;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

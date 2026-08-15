@@ -92,7 +92,7 @@ public class AcademicTermService {
 
     public List<ScheduleResponse> getSchedules(UUID termId) {
         findTerm(termId);
-        return classScheduleRepository.findByTermId(termId).stream()
+        return classScheduleRepository.findByTermIdWithDetails(termId).stream()
                 .map(ClassScheduleService::toResponse).toList();
     }
 

@@ -1,5 +1,6 @@
 package com.unicconnect.service;
 
+import com.unicconnect.dto.request.CreateStaffUserRequest;
 import com.unicconnect.dto.request.StaffPositionAssignmentRequest;
 import com.unicconnect.dto.request.StaffRequest;
 import com.unicconnect.dto.response.AssignedCourseResponse;
@@ -13,6 +14,8 @@ import com.unicconnect.exception.DuplicateResourceException;
 import com.unicconnect.exception.ResourceNotFoundException;
 import com.unicconnect.exception.ValidationException;
 import com.unicconnect.repository.*;
+import com.unicconnect.util.SecurityUtil;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +40,9 @@ public class StaffService {
     private final TeachingAssignmentRepository teachingAssignmentRepository;
     private final OrganizationalUnitRepository unitRepository;
     private final AcademicTermRepository termRepository;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final SecurityUtil securityUtil;
 
     public StaffService(StaffRepository staffRepository,
                         UserRepository userRepository,
@@ -44,7 +50,10 @@ public class StaffService {
                         StaffPositionAssignmentRepository assignmentRepository,
                         TeachingAssignmentRepository teachingAssignmentRepository,
                         OrganizationalUnitRepository unitRepository,
-                        AcademicTermRepository termRepository) {
+                        AcademicTermRepository termRepository,
+                        RoleRepository roleRepository,
+                        PasswordEncoder passwordEncoder,
+                        SecurityUtil securityUtil) {
         this.staffRepository = staffRepository;
         this.userRepository = userRepository;
         this.positionRepository = positionRepository;
@@ -52,12 +61,15 @@ public class StaffService {
         this.teachingAssignmentRepository = teachingAssignmentRepository;
         this.unitRepository = unitRepository;
         this.termRepository = termRepository;
+        this.roleRepository = roleRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.securityUtil = securityUtil;
     }
 
     public List<StaffResponse> getAll() {
-        List<Staff> staff = staffRepository.findAll();
+        List<Staff> staff = staffRepository.findAllWithUserAndUnit();
         Map<UUID, List<StaffPositionAssignment>> assignmentsByStaff = assignmentRepository
-                .findAll().stream()
+                .findAllWithPositionAndStaff().stream()
                 .collect(Collectors.groupingBy(pa -> pa.getStaff().getStaffId()));
         return staff.stream()
                 .map(s -> toResponse(s, assignmentsByStaff.getOrDefault(s.getStaffId(), java.util.Collections.emptyList())))
@@ -86,6 +98,110 @@ public class StaffService {
     }
 
     @Transactional
+    public StaffResponse createWithUser(CreateStaffUserRequest request) {
+        if (userRepository.existsByEmail(request.email().toLowerCase())) {
+            throw new DuplicateResourceException("Email is already in use");
+        }
+        List<String> positionNames = validatePositions(request.positionNames());
+        String staffNo = request.staffNo() != null && !request.staffNo().isBlank()
+                ? request.staffNo().toUpperCase() : nextStaffNo();
+        if (staffRepository.existsByStaffNo(staffNo)) {
+            throw new DuplicateResourceException("Staff number already exists: " + staffNo);
+        }
+
+        User user = new User();
+        user.setEmail(request.email().toLowerCase());
+        user.setPasswordHash(passwordEncoder.encode(request.password()));
+        user.setRole(roleRepository.findByRoleName("STAFF")
+                .orElseThrow(() -> new ResourceNotFoundException("Role not found: STAFF")));
+        user.setActive(request.isActive() == null || request.isActive());
+        user.setRegistrationStatus(RegistrationStatus.APPROVED);
+        user = userRepository.save(user);
+
+        Staff staff = new Staff();
+        staff.setUser(user);
+        staff.setStaffNo(staffNo);
+        staff.setStaffName(request.staffName());
+        staff.setPhoneNo(request.phoneNo());
+        staff.setBatchYear(request.batchYear());
+        staff.setAddress(request.address());
+        staff.setUnit(unitRepository.findById(request.unitId())
+                .orElseThrow(() -> new ResourceNotFoundException("Organizational unit not found")));
+        staff.setJoinedAt(request.joinedAt());
+        staff = staffRepository.save(staff);
+
+        LocalDate startDate = request.joinedAt() != null ? request.joinedAt() : LocalDate.now();
+        Staff assigner = staffRepository.findByUser_UserId(securityUtil.currentUserId()).orElse(null);
+        List<StaffPositionAssignment> assignments = new ArrayList<>();
+        for (String name : positionNames) {
+            assignments.add(assignmentRepository.save(createAssignment(staff, name, startDate, assigner)));
+        }
+        return toResponse(staff, assignments);
+    }
+
+    private StaffPositionAssignment createAssignment(Staff staff, String positionName, LocalDate startDate,
+                                                     Staff assigner) {
+        Position position = positionRepository.findByPositionName(positionName)
+                .orElseThrow(() -> new ResourceNotFoundException("Position not found: " + positionName));
+        if (assignmentRepository.existsByStaff_StaffIdAndPosition_PositionIdAndStartDate(
+                staff.getStaffId(), position.getPositionId(), startDate)) {
+            throw new DuplicateResourceException("This staff member already has this position starting on "
+                    + startDate);
+        }
+        StaffPositionAssignment assignment = new StaffPositionAssignment();
+        assignment.setStaff(staff);
+        assignment.setPosition(position);
+        assignment.setStartDate(startDate);
+        assignment.setAssignedByStaff(assigner);
+        return assignment;
+    }
+
+    private static final Map<String, java.util.Set<String>> POSITION_RULES = Map.of(
+            "LECTURER", java.util.Set.of("HOD"),
+            "STUDENT_AFFAIRS_OFFICER", java.util.Set.of("HOD", "JUNIOR_CLERK", "SENIOR_CLERK"),
+            "FINANCE_OFFICER", java.util.Set.of("HOD", "JUNIOR_CLERK", "SENIOR_CLERK"),
+            "ADMINISTRATIVE_OFFICER", java.util.Set.of("HOD", "JUNIOR_CLERK", "SENIOR_CLERK",
+                    "RECTOR", "PRO_RECTOR"));
+
+    private List<String> validatePositions(List<String> positionNames) {
+        List<String> names = positionNames.stream().map(String::toUpperCase).toList();
+        String base = names.stream().filter(POSITION_RULES::containsKey).findFirst()
+                .orElseThrow(() -> new ValidationException(
+                        "One default position (LECTURER, STUDENT_AFFAIRS_OFFICER, FINANCE_OFFICER "
+                                + "or ADMINISTRATIVE_OFFICER) is required"));
+        if (names.stream().filter(POSITION_RULES::containsKey).count() > 1) {
+            throw new ValidationException("Only one default position may be assigned");
+        }
+        java.util.Set<String> allowed = POSITION_RULES.get(base);
+        for (String name : names) {
+            if (!POSITION_RULES.containsKey(name) && !allowed.contains(name)) {
+                throw new ValidationException("Position " + name + " is not allowed for a " + base);
+            }
+        }
+        if (names.stream().distinct().count() != names.size()) {
+            throw new ValidationException("Duplicate position in request");
+        }
+        return names;
+    }
+
+    private String nextStaffNo() {
+        String prefix = "STF";
+        int max = 0;
+        for (Staff existing : staffRepository.findAll()) {
+            String no = existing.getStaffNo();
+            if (no != null && no.startsWith(prefix) && no.substring(prefix.length()).matches("\\d+")) {
+                max = Math.max(max, Integer.parseInt(no.substring(prefix.length())));
+            }
+        }
+        String candidate;
+        do {
+            max++;
+            candidate = prefix + String.format("%03d", max);
+        } while (staffRepository.existsByStaffNo(candidate));
+        return candidate;
+    }
+
+    @Transactional
     public StaffResponse update(UUID staffId, StaffRequest request) {
         Staff staff = findStaff(staffId);
         if (!staff.getStaffNo().equals(request.staffNo()) && staffRepository.existsByStaffNo(request.staffNo())) {
@@ -94,7 +210,22 @@ public class StaffService {
         User user = userRepository.findById(request.userId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         apply(staff, request, user);
-        return toResponse(staffRepository.save(staff), assignmentRepository.findByStaff_StaffId(staffId));
+        if (request.positionNames() != null && !request.positionNames().isEmpty()) {
+            syncPositionAssignments(staff, request.positionNames());
+        }
+        staff = staffRepository.save(staff);
+        return toResponse(staff, assignmentRepository.findByStaff_StaffId(staffId));
+    }
+
+    private void syncPositionAssignments(Staff staff, List<String> positionNames) {
+        List<String> names = validatePositions(positionNames);
+        assignmentRepository.deleteAll(assignmentRepository.findByStaff_StaffId(staff.getStaffId()));
+        assignmentRepository.flush();
+        LocalDate startDate = staff.getJoinedAt() != null ? staff.getJoinedAt() : LocalDate.now();
+        Staff assigner = staffRepository.findByUser_UserId(securityUtil.currentUserId()).orElse(null);
+        for (String name : names) {
+            assignmentRepository.save(createAssignment(staff, name, startDate, assigner));
+        }
     }
 
     @Transactional

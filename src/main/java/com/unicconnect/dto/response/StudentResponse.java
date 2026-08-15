@@ -19,6 +19,6 @@ public record StudentResponse(
         String studentName,
         String phoneNo,
         String address,
-        Integer birthYear,
+        Integer batchYear,
         Instant createdAt
 ) {}

@@ -1,7 +1,9 @@
 package com.unicconnect.controller;
 
 import com.unicconnect.dto.request.CreateUserRequest;
+import com.unicconnect.dto.request.DeleteUsersRequest;
 import com.unicconnect.dto.request.UpdateMeRequest;
+import com.unicconnect.dto.request.UpdateUserRequest;
 import com.unicconnect.dto.request.UpdateUserStatusRequest;
 import com.unicconnect.dto.request.UpdateUserRoleRequest;
 import com.unicconnect.dto.response.UserResponse;
@@ -60,6 +62,24 @@ public class UserController {
     public ResponseEntity<UserResponse> updateStatus(@PathVariable UUID userId,
                                                      @Valid @RequestBody UpdateUserStatusRequest request) {
         return ResponseEntity.ok(userService.updateStatus(userId, request));
+    }
+
+    @PatchMapping("/{userId}")
+    public ResponseEntity<UserResponse> update(@PathVariable UUID userId,
+                                               @Valid @RequestBody UpdateUserRequest request) {
+        return ResponseEntity.ok(userService.updateUser(userId, request));
+    }
+
+    @DeleteMapping("/{userId}")
+    public ResponseEntity<Void> delete(@PathVariable UUID userId) {
+        userService.deleteUser(userId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/bulk-delete")
+    public ResponseEntity<Void> bulkDelete(@Valid @RequestBody DeleteUsersRequest request) {
+        userService.deleteUsers(request.userIds());
+        return ResponseEntity.noContent().build();
     }
 
     @PatchMapping("/{userId}/role")

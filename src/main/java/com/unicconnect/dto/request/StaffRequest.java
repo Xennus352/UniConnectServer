@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 public record StaffRequest(
@@ -15,5 +16,6 @@ public record StaffRequest(
         String address,
         UUID unitId,
         LocalDate joinedAt,
-        LocalDate leftDate
+        LocalDate leftDate,
+        List<String> positionNames
 ) {}
