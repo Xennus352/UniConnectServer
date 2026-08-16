@@ -4,15 +4,19 @@ import com.unicconnect.entity.ScheduleStatus;
 import com.unicconnect.entity.ScheduleType;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 public record ScheduleResponse(
         UUID scheduleId,
         UUID generationId,
         UUID teachingAssignmentId,
+        UUID teachingGroupId,
         String courseCode,
+        String courseName,
         String staffName,
         String sectionName,
+        Integer semesterNo,
         Integer dayOfWeek,
         UUID startSlotId,
         Integer startPeriodNo,
@@ -20,5 +24,7 @@ public record ScheduleResponse(
         Integer endPeriodNo,
         ScheduleStatus scheduleStatus,
         ScheduleType scheduleType,
+        List<String> sections,
+        List<String> staffNames,
         Instant createdAt
 ) {}

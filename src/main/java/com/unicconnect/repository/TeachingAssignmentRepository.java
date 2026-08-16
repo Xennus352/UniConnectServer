@@ -16,6 +16,7 @@ public interface TeachingAssignmentRepository extends JpaRepository<TeachingAssi
     List<TeachingAssignment> findBySection_SectionId(UUID sectionId);
     Optional<TeachingAssignment> findByTerm_TermIdAndCourse_CourseIdAndSection_SectionId(UUID termId, UUID courseId, UUID sectionId);
     boolean existsByTerm_TermIdAndCourse_CourseIdAndSection_SectionId(UUID termId, UUID courseId, UUID sectionId);
+    boolean existsByTerm_TermIdAndCourse_CourseId(UUID termId, UUID courseId);
 
     @Query("select ta from TeachingAssignment ta join fetch ta.course c left join fetch c.semester " +
            "join fetch ta.section join fetch ta.term " +

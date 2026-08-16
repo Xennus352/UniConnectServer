@@ -10,6 +10,7 @@ import java.util.UUID;
 public record ScheduleRequest(
         @NotNull UUID generationId,
         UUID teachingAssignmentId,
+        UUID teachingGroupId,
         @NotNull @Positive Integer dayOfWeek,
         @NotNull UUID startSlotId,
         @NotNull UUID endSlotId,

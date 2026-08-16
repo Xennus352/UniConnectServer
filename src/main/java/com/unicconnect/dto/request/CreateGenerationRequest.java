@@ -6,5 +6,5 @@ import java.util.UUID;
 
 public record CreateGenerationRequest(
         @NotNull UUID termId,
-        @NotNull UUID generatedByStaffId
+        UUID generatedByStaffId
 ) {}

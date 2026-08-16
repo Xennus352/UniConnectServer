@@ -9,10 +9,13 @@ import com.unicconnect.exception.ResourceNotFoundException;
 import com.unicconnect.exception.ValidationException;
 import com.unicconnect.repository.CourseMeetingRequirementRepository;
 import com.unicconnect.repository.CourseRepository;
+import com.unicconnect.repository.TeachingAssignmentRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -21,15 +24,30 @@ public class CourseMeetingRequirementService {
 
     private final CourseMeetingRequirementRepository requirementRepository;
     private final CourseRepository courseRepository;
+    private final HodAccessService hodAccessService;
+    private final TimetableRealtimeEventService realtimeEventService;
+    private final TeachingAssignmentRepository assignmentRepository;
 
     public CourseMeetingRequirementService(CourseMeetingRequirementRepository requirementRepository,
-                                           CourseRepository courseRepository) {
+                                           CourseRepository courseRepository,
+                                           HodAccessService hodAccessService,
+                                           TimetableRealtimeEventService realtimeEventService,
+                                           TeachingAssignmentRepository assignmentRepository) {
         this.requirementRepository = requirementRepository;
         this.courseRepository = courseRepository;
+        this.hodAccessService = hodAccessService;
+        this.realtimeEventService = realtimeEventService;
+        this.assignmentRepository = assignmentRepository;
     }
 
-    public List<MeetingRequirementResponse> getAll() {
+    public List<MeetingRequirementResponse> getAll(UUID unitId, UUID semesterId) {
         return requirementRepository.findAll().stream()
+                .filter(r -> unitId == null
+                        || (r.getCourse().getUnit() != null
+                            && r.getCourse().getUnit().getUnitId().equals(unitId)))
+                .filter(r -> semesterId == null
+                        || (r.getCourse().getSemester() != null
+                            && r.getCourse().getSemester().getSemesterId().equals(semesterId)))
                 .map(CourseMeetingRequirementService::toResponse).toList();
     }
 
@@ -45,21 +63,47 @@ public class CourseMeetingRequirementService {
         }
         Course course = courseRepository.findById(request.courseId())
                 .orElseThrow(() -> new ResourceNotFoundException("Course not found"));
-        return createInternal(requirementRepository, course, request);
+        // HODs may only manage courses belonging to their own organizational unit.
+        hodAccessService.requireHodForUnit(course.getUnit().getUnitId());
+        MeetingRequirementResponse response =
+                createInternal(requirementRepository, course, request);
+        publishRequirementChanged(response, TimetableRealtimeEventService.COURSE_REQUIREMENT_CREATED);
+        return response;
     }
 
     @Transactional
     public MeetingRequirementResponse update(UUID requirementId, MeetingRequirementRequest request) {
         CourseMeetingRequirement requirement = requirementRepository.findById(requirementId)
                 .orElseThrow(() -> new ResourceNotFoundException("Meeting requirement not found"));
-        return updateInternal(requirementRepository, requirement.getCourse().getCourseId(), requirementId, request);
+        hodAccessService.requireHodForUnit(requirement.getCourse().getUnit().getUnitId());
+        MeetingRequirementResponse response = updateInternal(requirementRepository,
+                requirement.getCourse().getCourseId(), requirementId, request);
+        publishRequirementChanged(response, TimetableRealtimeEventService.COURSE_REQUIREMENT_UPDATED);
+        return response;
     }
 
     @Transactional
     public void delete(UUID requirementId) {
         CourseMeetingRequirement requirement = requirementRepository.findById(requirementId)
                 .orElseThrow(() -> new ResourceNotFoundException("Meeting requirement not found"));
+        hodAccessService.requireHodForUnit(requirement.getCourse().getUnit().getUnitId());
         requirementRepository.delete(requirement);
+        publishRequirementChanged(
+                new MeetingRequirementResponse(requirement.getRequirementId(),
+                        requirement.getCourse().getCourseId(),
+                        requirement.getCourse().getCourseCode(),
+                        requirement.getMeetingType(),
+                        requirement.getSessionsPerWeek(),
+                        requirement.getPeriodsPerSession()),
+                TimetableRealtimeEventService.COURSE_REQUIREMENT_DELETED);
+    }
+
+    private void publishRequirementChanged(MeetingRequirementResponse requirement, String type) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("requirementId", requirement.requirementId());
+        payload.put("courseId", requirement.courseId());
+        payload.put("courseCode", requirement.courseCode());
+        realtimeEventService.publishForCourse(requirement.courseId(), type, payload);
     }
 
     static MeetingRequirementResponse createInternal(CourseMeetingRequirementRepository repository,

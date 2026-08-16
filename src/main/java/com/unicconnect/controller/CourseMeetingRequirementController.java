@@ -21,8 +21,10 @@ public class CourseMeetingRequirementController {
     }
 
     @GetMapping
-    public ResponseEntity<List<MeetingRequirementResponse>> getAll() {
-        return ResponseEntity.ok(service.getAll());
+    public ResponseEntity<List<MeetingRequirementResponse>> getAll(
+            @RequestParam(required = false) UUID unitId,
+            @RequestParam(required = false) UUID semesterId) {
+        return ResponseEntity.ok(service.getAll(unitId, semesterId));
     }
 
     @GetMapping("/{requirementId}")

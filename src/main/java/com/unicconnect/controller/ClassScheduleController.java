@@ -34,6 +34,14 @@ public class ClassScheduleController {
         return ResponseEntity.ok(scheduleService.getAll(termId, sectionId, staffId, dayOfWeek));
     }
 
+    /**
+     * Normal timetable view: only the schedules of the term's published generation.
+     */
+    @GetMapping("/published")
+    public ResponseEntity<List<ScheduleResponse>> getPublished(@RequestParam UUID termId) {
+        return ResponseEntity.ok(scheduleService.getPublished(termId));
+    }
+
     @GetMapping("/{scheduleId}")
     public ResponseEntity<ScheduleResponse> getById(@PathVariable UUID scheduleId) {
         return ResponseEntity.ok(scheduleService.getById(scheduleId));

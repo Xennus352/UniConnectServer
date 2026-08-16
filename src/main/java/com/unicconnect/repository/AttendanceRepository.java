@@ -15,4 +15,6 @@ public interface AttendanceRepository extends JpaRepository<Attendance, UUID> {
 
     @Query("SELECT COUNT(DISTINCT a.student.studentId) FROM Attendance a WHERE a.session.sessionId = :sessionId")
     long countStudentsBySession(@Param("sessionId") UUID sessionId);
+
+    long countBySession_Schedule_Generation_GenerationId(UUID generationId);
 }

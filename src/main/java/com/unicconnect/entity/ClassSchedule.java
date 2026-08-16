@@ -29,6 +29,10 @@ public class ClassSchedule {
     @JoinColumn(name = "teaching_assignment_id")
     private TeachingAssignment teachingAssignment;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "teaching_group_id")
+    private TeachingAssignmentGroup teachingGroup;
+
     @Column(name = "day_of_week", nullable = false)
     private Integer dayOfWeek;
 

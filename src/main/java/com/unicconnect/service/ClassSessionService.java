@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -123,16 +124,32 @@ public class ClassSessionService {
 
     static ClassSessionResponse toResponse(ClassSession session) {
         ClassSchedule schedule = session.getSchedule();
+        String courseCode = null;
+        UUID sectionId = null;
+        String sectionName = null;
+        if (schedule.getTeachingAssignment() != null) {
+            courseCode = schedule.getTeachingAssignment().getCourse().getCourseCode();
+            sectionId = schedule.getTeachingAssignment().getSection().getSectionId();
+            sectionName = schedule.getTeachingAssignment().getSection().getSectionName();
+        } else if (schedule.getTeachingGroup() != null) {
+            // Combined (shared) class: expose the group course; the section name is
+            // rendered as the joined member sections for display purposes.
+            TeachingAssignmentGroup group = schedule.getTeachingGroup();
+            courseCode = group.getCourse().getCourseCode();
+            List<String> names = new ArrayList<>();
+            for (TeachingAssignmentGroupMember m : group.getMembers()) {
+                names.add(m.getAssignment().getSection().getSectionName());
+            }
+            names.sort(String::compareTo);
+            sectionName = String.join(" + ", names);
+        }
         return new ClassSessionResponse(
                 session.getSessionId(),
                 schedule.getScheduleId(),
                 schedule.getGeneration().getTerm().getTermId(),
-                schedule.getTeachingAssignment() != null
-                        ? schedule.getTeachingAssignment().getCourse().getCourseCode() : null,
-                schedule.getTeachingAssignment() != null
-                        ? schedule.getTeachingAssignment().getSection().getSectionId() : null,
-                schedule.getTeachingAssignment() != null
-                        ? schedule.getTeachingAssignment().getSection().getSectionName() : null,
+                courseCode,
+                sectionId,
+                sectionName,
                 session.getSessionDate(),
                 session.getSessionStatus(),
                 session.getStartedAt(),

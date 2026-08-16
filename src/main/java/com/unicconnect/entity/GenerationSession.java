@@ -42,6 +42,9 @@ public class GenerationSession {
     @Column(name = "finished_at")
     private Instant finishedAt;
 
+    @Column(name = "scope_json")
+    private String scopeJson;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

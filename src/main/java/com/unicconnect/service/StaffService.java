@@ -10,6 +10,7 @@ import com.unicconnect.dto.response.StaffPositionAssignmentResponse;
 import com.unicconnect.dto.response.StaffResponse;
 import com.unicconnect.dto.response.TeachingAssignmentResponse;
 import com.unicconnect.entity.*;
+import com.unicconnect.exception.BusinessRuleException;
 import com.unicconnect.exception.DuplicateResourceException;
 import com.unicconnect.exception.ResourceNotFoundException;
 import com.unicconnect.exception.ValidationException;
@@ -81,6 +82,13 @@ public class StaffService {
         return toResponse(staff, assignmentRepository.findByStaff_StaffId(staffId));
     }
 
+    public StaffResponse getCurrentStaff() {
+        Staff staff = staffRepository.findByUser_UserId(securityUtil.currentUserId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No staff profile found for the current user"));
+        return toResponse(staff, assignmentRepository.findByStaff_StaffId(staff.getStaffId()));
+    }
+
     @Transactional
     public StaffResponse create(StaffRequest request) {
         if (staffRepository.existsByStaffNo(request.staffNo())) {
@@ -143,6 +151,7 @@ public class StaffService {
                                                      Staff assigner) {
         Position position = positionRepository.findByPositionName(positionName)
                 .orElseThrow(() -> new ResourceNotFoundException("Position not found: " + positionName));
+        enforcePositionRules(staff, positionName);
         if (assignmentRepository.existsByStaff_StaffIdAndPosition_PositionIdAndStartDate(
                 staff.getStaffId(), position.getPositionId(), startDate)) {
             throw new DuplicateResourceException("This staff member already has this position starting on "
@@ -154,6 +163,38 @@ public class StaffService {
         assignment.setStartDate(startDate);
         assignment.setAssignedByStaff(assigner);
         return assignment;
+    }
+
+    /**
+     * Lecturers and HODs must belong to an academic unit, and at most one active
+     * HOD is allowed per department or faculty.
+     */
+    private void enforcePositionRules(Staff staff, String positionName) {
+        if ("HOD".equals(positionName)) {
+            enforceAcademicUnit(staff, "HODs");
+            LocalDate today = LocalDate.now();
+            boolean otherHodInUnit = staff.getUnit() != null
+                    && staffRepository.findByUnit_UnitId(staff.getUnit().getUnitId()).stream()
+                            .filter(other -> !other.getStaffId().equals(staff.getStaffId()))
+                            .anyMatch(other -> assignmentRepository
+                                    .findByStaff_StaffId(other.getStaffId()).stream()
+                                    .anyMatch(pa -> "HOD".equals(pa.getPosition().getPositionName())
+                                            && !pa.getStartDate().isAfter(today)
+                                            && (pa.getEndDate() == null || !pa.getEndDate().isBefore(today))));
+            if (otherHodInUnit) {
+                throw new BusinessRuleException(
+                        "This department already has an active HOD");
+            }
+        } else if ("LECTURER".equals(positionName)) {
+            enforceAcademicUnit(staff, "Lecturers");
+        }
+    }
+
+    private void enforceAcademicUnit(Staff staff, String entityLabel) {
+        if (staff.getUnit() == null || !"ACADEMIC".equalsIgnoreCase(staff.getUnit().getUnitType())) {
+            throw new ValidationException(
+                    entityLabel + " must belong to an academic unit (department or faculty)");
+        }
     }
 
     private static final Map<String, java.util.Set<String>> POSITION_RULES = Map.of(
@@ -210,6 +251,12 @@ public class StaffService {
         User user = userRepository.findById(request.userId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         apply(staff, request, user);
+        boolean hasTeachingPosition = assignmentRepository.findByStaff_StaffId(staffId).stream()
+                .map(pa -> pa.getPosition().getPositionName())
+                .anyMatch(name -> "LECTURER".equals(name) || "HOD".equals(name));
+        if (hasTeachingPosition) {
+            enforceAcademicUnit(staff, "Lecturers and HODs");
+        }
         if (request.positionNames() != null && !request.positionNames().isEmpty()) {
             syncPositionAssignments(staff, request.positionNames());
         }
@@ -264,6 +311,7 @@ public class StaffService {
         Staff staff = findStaff(staffId);
         Position position = positionRepository.findById(request.positionId())
                 .orElseThrow(() -> new ResourceNotFoundException("Position not found"));
+        enforcePositionRules(staff, position.getPositionName());
 
         if (assignmentRepository.existsByStaff_StaffIdAndPosition_PositionIdAndStartDate(
                 staffId, position.getPositionId(), request.startDate())) {
@@ -297,6 +345,7 @@ public class StaffService {
         }
         Position position = positionRepository.findById(request.positionId())
                 .orElseThrow(() -> new ResourceNotFoundException("Position not found"));
+        enforcePositionRules(assignment.getStaff(), position.getPositionName());
         assignment.setPosition(position);
         assignment.setEndDate(request.endDate());
         if (request.assignedByStaffId() != null) {

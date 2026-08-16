@@ -48,6 +48,11 @@ public class StaffController {
         return ResponseEntity.ok(service.getLecturers(termId));
     }
 
+    @GetMapping("/me")
+    public ResponseEntity<StaffResponse> getCurrentStaff() {
+        return ResponseEntity.ok(service.getCurrentStaff());
+    }
+
     @GetMapping("/{staffId}")
     public ResponseEntity<StaffResponse> getById(@PathVariable UUID staffId) {
         return ResponseEntity.ok(service.getById(staffId));

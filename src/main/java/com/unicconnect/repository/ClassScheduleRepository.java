@@ -22,25 +22,35 @@ public interface ClassScheduleRepository extends JpaRepository<ClassSchedule, UU
             + " JOIN FETCH s.startSlot"
             + " JOIN FETCH s.endSlot";
 
-    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS + " WHERE g.term.termId = :termId")
+    // Matches shared (combined-section) schedules: a schedule row belongs to the
+    // given section when its teaching assignment targets it OR when one of its
+    // teaching group members targets it. plain (non-fetch) joins keep the result
+    // rows deduplicated via DISTINCT.
+    String GROUP_JOINS = " LEFT JOIN s.teachingGroup tg"
+            + " LEFT JOIN tg.members tgm";
+
+    @Query("SELECT DISTINCT s FROM ClassSchedule s" + FETCH_JOINS + " WHERE g.term.termId = :termId")
     List<ClassSchedule> findByTermIdWithDetails(@Param("termId") UUID termId);
 
-    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS
-            + " WHERE a.section.sectionId = :sectionId")
+    @Query("SELECT DISTINCT s FROM ClassSchedule s" + FETCH_JOINS + GROUP_JOINS
+            + " WHERE a.section.sectionId = :sectionId"
+            + " OR tgm.assignment.section.sectionId = :sectionId")
     List<ClassSchedule> findBySectionIdWithDetails(@Param("sectionId") UUID sectionId);
 
-    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS
-            + " WHERE a.staff.staffId = :staffId")
+    @Query("SELECT DISTINCT s FROM ClassSchedule s" + FETCH_JOINS + GROUP_JOINS
+            + " WHERE a.staff.staffId = :staffId"
+            + " OR tgm.assignment.staff.staffId = :staffId")
     List<ClassSchedule> findByStaffIdWithDetails(@Param("staffId") UUID staffId);
 
-    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS + " WHERE s.dayOfWeek = :dayOfWeek")
+    @Query("SELECT DISTINCT s FROM ClassSchedule s" + FETCH_JOINS + " WHERE s.dayOfWeek = :dayOfWeek")
     List<ClassSchedule> findByDayOfWeekWithDetails(@Param("dayOfWeek") Integer dayOfWeek);
 
-    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS)
+    @Query("SELECT DISTINCT s FROM ClassSchedule s" + FETCH_JOINS)
     List<ClassSchedule> findAllWithDetails();
 
-    @Query("SELECT s FROM ClassSchedule s" + FETCH_JOINS
-            + " WHERE g.term.termId = :termId AND sec.sectionId = :sectionId")
+    @Query("SELECT DISTINCT s FROM ClassSchedule s" + FETCH_JOINS + GROUP_JOINS
+            + " WHERE g.term.termId = :termId"
+            + " AND (sec.sectionId = :sectionId OR tgm.assignment.section.sectionId = :sectionId)")
     List<ClassSchedule> findByTermAndSectionWithDetails(@Param("termId") UUID termId,
                                                         @Param("sectionId") UUID sectionId);
 
@@ -66,4 +76,6 @@ public interface ClassScheduleRepository extends JpaRepository<ClassSchedule, UU
 
     boolean existsByTeachingAssignment_AssignmentIdAndScheduleStatusNot(
             UUID assignmentId, ScheduleStatus excluded);
+
+    boolean existsByTeachingGroup_GroupId(UUID groupId);
 }
