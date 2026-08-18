@@ -18,6 +18,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
@@ -38,6 +40,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessRuleException.class)
     public ResponseEntity<ErrorResponse> handleBusinessRule(BusinessRuleException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, "BUSINESS_RULE", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(TimetableConflictException.class)
+    public ResponseEntity<ErrorResponse> handleTimetableConflict(TimetableConflictException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "TIMETABLE_CONFLICT", ex.getMessage(), req, ex.conflicts());
     }
 
     @ExceptionHandler(ValidationException.class)
@@ -91,7 +98,13 @@ public class GlobalExceptionHandler {
     }
 
     private ResponseEntity<ErrorResponse> build(HttpStatus status, String error, String message, HttpServletRequest req) {
+        return build(status, error, message, req, null);
+    }
+
+    private ResponseEntity<ErrorResponse> build(HttpStatus status, String error, String message,
+                                                HttpServletRequest req, List<String> conflicts) {
         return ResponseEntity.status(status)
-                .body(ErrorResponse.of(status.value(), error, message, req.getRequestURI()));
+                .body(new ErrorResponse(Instant.now(), status.value(), error, message,
+                        req.getRequestURI(), conflicts));
     }
 }

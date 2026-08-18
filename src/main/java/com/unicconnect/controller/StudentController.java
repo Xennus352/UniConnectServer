@@ -44,11 +44,6 @@ public class StudentController {
         return ResponseEntity.ok(service.getAll(majorId, semesterId, sectionId, termId));
     }
 
-    @GetMapping("/me")
-    public ResponseEntity<StudentResponse> getCurrentStudent() {
-        return ResponseEntity.ok(service.getCurrentStudent());
-    }
-
     @GetMapping("/{studentId}")
     public ResponseEntity<StudentResponse> getById(@PathVariable UUID studentId) {
         return ResponseEntity.ok(service.getById(studentId));

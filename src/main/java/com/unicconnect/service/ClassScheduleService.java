@@ -1,7 +1,9 @@
 package com.unicconnect.service;
 
 import com.unicconnect.dto.request.ScheduleRequest;
+import com.unicconnect.dto.request.SwapScheduleRequest;
 import com.unicconnect.dto.response.ScheduleResponse;
+import com.unicconnect.dto.response.SwapScheduleResponse;
 import com.unicconnect.entity.*;
 import com.unicconnect.exception.BusinessRuleException;
 import com.unicconnect.exception.ResourceNotFoundException;
@@ -131,6 +133,222 @@ public class ClassScheduleService {
         return response;
     }
 
+    /**
+     * Swap two schedules (or move one when the drop cell is empty).
+     *
+     * <p>When the target cell is occupied by another schedule the swap is
+     * simulated first. If the simulated swap creates conflicts and the caller has
+     * not confirmed ({@code force=false}), the swap is <b>not</b> applied and the
+     * conflict descriptions are returned so the UI can ask
+     * "Are you sure you want to switch these periods?". Only an explicit
+     * {@code force=true} confirmation applies a conflicting swap.
+     */
+    @Transactional
+    public SwapScheduleResponse swap(UUID generationId, SwapScheduleRequest request) {
+        hodAccessService.requireHod();
+        ClassSchedule source = scheduleRepository.findById(request.scheduleId())
+                .orElseThrow(() -> new ResourceNotFoundException("Class schedule not found"));
+        if (!source.getGeneration().getGenerationId().equals(generationId)) {
+            throw new ValidationException("Schedule does not belong to this generation");
+        }
+        GenerationSession generation = source.getGeneration();
+        requireEditable(generation);
+        editLockService.requireLockOwned(generationId);
+
+        if (request.targetDay() < 1 || request.targetDay() > 5) {
+            throw new ValidationException("Schedules may only be placed Monday-Friday (day 1-5)");
+        }
+        List<TimeSlot> slots = timeSlotRepository.findAllByOrderByDisplayOrderAscPeriodNoAsc();
+        TimeSlot targetStart = slotByPeriod(slots, request.targetPeriod());
+        if (targetStart == null) {
+            throw new ValidationException("Target period does not exist");
+        }
+        int sourceSpan = source.getEndSlot().getPeriodNo() - source.getStartSlot().getPeriodNo();
+        TimeSlot sourceNewEnd = slotByPeriod(slots, request.targetPeriod() + sourceSpan);
+        if (sourceNewEnd == null) {
+            throw new ValidationException("That move would overflow the timetable");
+        }
+
+        UUID sourceId = source.getScheduleId();
+        ClassSchedule target = scheduleRepository.findByGeneration_GenerationId(generationId).stream()
+                .filter(s -> s.getScheduleStatus() != ScheduleStatus.CANCELLED)
+                .filter(s -> s.getDayOfWeek().equals(request.targetDay()))
+                .filter(s -> s.getStartSlot().getPeriodNo().equals(request.targetPeriod()))
+                .filter(s -> !s.getScheduleId().equals(sourceId))
+                .findFirst()
+                .orElse(null);
+
+        if (target == null) {
+            // Plain move: reuse the single-schedule update path (conflicts reject).
+            ScheduleResponse moved = update(source.getScheduleId(),
+                    new ScheduleRequest(generationId,
+                            source.getTeachingAssignment() != null
+                                    ? source.getTeachingAssignment().getAssignmentId() : null,
+                            source.getTeachingGroup() != null
+                                    ? source.getTeachingGroup().getGroupId() : null,
+                            request.targetDay(),
+                            targetStart.getSlotId(),
+                            sourceNewEnd.getSlotId(),
+                            source.getScheduleType(),
+                            source.getScheduleStatus()));
+            return new SwapScheduleResponse(false, List.of(), List.of(moved));
+        }
+
+        // Swap: both schedules exchange positions.
+        Integer sourceDay = source.getDayOfWeek();
+        int targetSpan = target.getEndSlot().getPeriodNo() - target.getStartSlot().getPeriodNo();
+        TimeSlot targetNewStart = source.getStartSlot();
+        TimeSlot targetNewEnd = slotByPeriod(slots, source.getStartSlot().getPeriodNo() + targetSpan);
+        if (targetNewEnd == null) {
+            throw new ValidationException("That swap would overflow the timetable");
+        }
+
+        List<String> conflicts = new ArrayList<>();
+        conflicts.addAll(collectSwapConflicts(source, request.targetDay(), targetStart, sourceNewEnd, target));
+        conflicts.addAll(collectSwapConflicts(target, sourceDay, targetNewStart, targetNewEnd, source));
+
+        if (!conflicts.isEmpty() && !request.force()) {
+            return new SwapScheduleResponse(false, conflicts, null);
+        }
+
+        source.setDayOfWeek(request.targetDay());
+        source.setStartSlot(targetStart);
+        source.setEndSlot(sourceNewEnd);
+        target.setDayOfWeek(sourceDay);
+        target.setStartSlot(targetNewStart);
+        target.setEndSlot(targetNewEnd);
+        source = scheduleRepository.save(source);
+        target = scheduleRepository.save(target);
+
+        ScheduleResponse sourceResponse = toResponse(source);
+        ScheduleResponse targetResponse = toResponse(target);
+        realtimeEventService.publishForGeneration(generationId,
+                TimetableRealtimeEventService.SCHEDULE_UPDATED,
+                Map.of("generationId", generationId, "scheduleId", sourceResponse.scheduleId()));
+        realtimeEventService.publishForGeneration(generationId,
+                TimetableRealtimeEventService.SCHEDULE_UPDATED,
+                Map.of("generationId", generationId, "scheduleId", targetResponse.scheduleId()));
+        return new SwapScheduleResponse(true, List.of(), List.of(sourceResponse, targetResponse));
+    }
+
+    private TimeSlot slotByPeriod(List<TimeSlot> slots, int periodNo) {
+        return slots.stream().filter(t -> t.getPeriodNo().equals(periodNo)).findFirst().orElse(null);
+    }
+
+    /**
+     * Non-throwing conflict scan for one side of a simulated swap: would
+     * {@code moved} at ({@code day}, {@code start}-{@code end}) collide with any
+     * schedule other than itself and its swap partner? Mirrors the rules of
+     * {@link #validateNoConflicts} but returns human-readable descriptions.
+     */
+    private List<String> collectSwapConflicts(ClassSchedule moved, int day, TimeSlot start, TimeSlot end,
+                                              ClassSchedule partner) {
+        List<String> messages = new ArrayList<>();
+        List<ClassSchedule> daySchedules = scheduleRepository.findByGeneration_GenerationId(
+                moved.getGeneration().getGenerationId()).stream()
+                .filter(s -> s.getDayOfWeek().equals(day))
+                .filter(s -> !s.getScheduleId().equals(moved.getScheduleId()))
+                .filter(s -> !s.getScheduleId().equals(partner.getScheduleId()))
+                .filter(s -> s.getScheduleStatus() != ScheduleStatus.CANCELLED)
+                .toList();
+
+        if (moved.getScheduleType() == ScheduleType.COURSE) {
+            Set<UUID> candidateStaff = new HashSet<>();
+            Set<UUID> candidateSections = new HashSet<>();
+            String candidateCourse = null;
+            Course candidateCourseEntity = null;
+            UUID candidateGroupId = null;
+            UUID candidateAssignmentId = null;
+            if (moved.getTeachingGroup() != null) {
+                candidateGroupId = moved.getTeachingGroup().getGroupId();
+                for (TeachingAssignmentGroupMember m : moved.getTeachingGroup().getMembers()) {
+                    candidateStaff.add(m.getAssignment().getStaff().getStaffId());
+                    candidateSections.add(m.getAssignment().getSection().getSectionId());
+                }
+                candidateCourse = moved.getTeachingGroup().getCourse().getCourseCode();
+                candidateCourseEntity = moved.getTeachingGroup().getCourse();
+            } else if (moved.getTeachingAssignment() != null) {
+                TeachingAssignment assignment = moved.getTeachingAssignment();
+                candidateAssignmentId = assignment.getAssignmentId();
+                candidateStaff.add(assignment.getStaff().getStaffId());
+                candidateSections.add(assignment.getSection().getSectionId());
+                candidateCourse = assignment.getCourse().getCourseCode();
+                candidateCourseEntity = assignment.getCourse();
+            }
+
+            for (ClassSchedule other : daySchedules) {
+                boolean special = other.getScheduleType() != ScheduleType.COURSE;
+
+                // RULE 13: one session per teaching unit per day.
+                if (!special && candidateGroupId != null && other.getTeachingGroup() != null
+                        && other.getTeachingGroup().getGroupId().equals(candidateGroupId)) {
+                    messages.add(describeSwapConflict(moved, other, day,
+                            "the same combined course already has a session on this day"));
+                    continue;
+                }
+                if (!special && candidateAssignmentId != null && other.getTeachingAssignment() != null
+                        && other.getTeachingAssignment().getAssignmentId().equals(candidateAssignmentId)) {
+                    messages.add(describeSwapConflict(moved, other, day,
+                            "this course already has a session for this teaching assignment on this day"));
+                    continue;
+                }
+
+                if (overlaps(start, end, List.of(other))) {
+                    Set<UUID> otherStaff = coveredStaff(other);
+                    Set<UUID> otherSections = coveredSections(other);
+                    boolean sameElectiveGroup = !special && other.getTeachingAssignment() != null
+                            && sameElectiveGroup(candidateCourseEntity, other.getTeachingAssignment().getCourse());
+                    boolean identicalWindow = start.getDisplayOrder() == other.getStartSlot().getDisplayOrder()
+                            && end.getDisplayOrder() == other.getEndSlot().getDisplayOrder();
+                    boolean sectionOverlap = !Collections.disjoint(candidateSections, otherSections);
+                    if (special || !Collections.disjoint(candidateStaff, otherStaff)
+                            || (!sameElectiveGroup && sectionOverlap)
+                            || (sameElectiveGroup && !identicalWindow && sectionOverlap)) {
+                        String reason = special ? "a " + other.getScheduleType() + " period"
+                                : (!Collections.disjoint(candidateStaff, otherStaff)
+                                        ? "another engagement of the same lecturer"
+                                        : (sameElectiveGroup
+                                                ? "a partial overlap of an elective-group window"
+                                                : "another schedule for the same section"));
+                        messages.add(describeSwapConflict(moved, other, day, reason));
+                    }
+                    if (!special && candidateCourse != null
+                            && candidateCourse.equals(courseCodeOf(other))
+                            && !Collections.disjoint(candidateSections, otherSections)) {
+                        messages.add(describeSwapConflict(moved, other, day,
+                                "course " + candidateCourse
+                                        + " is already scheduled for one of these sections on this day"));
+                    }
+                }
+            }
+        } else {
+            for (ClassSchedule other : daySchedules) {
+                if (overlaps(start, end, List.of(other))
+                        && other.getScheduleType() == ScheduleType.COURSE) {
+                    messages.add(describeSwapConflict(moved, other, day,
+                            "a COURSE session already occupies this slot"));
+                }
+            }
+        }
+        return messages;
+    }
+
+    private String describeSwapConflict(ClassSchedule moved, ClassSchedule other, int day, String reason) {
+        String movedLabel = courseCodeOf(moved) != null
+                ? courseCodeOf(moved) + " (" + moved.getScheduleType() + ")"
+                : String.valueOf(moved.getScheduleType());
+        String otherLabel = courseCodeOf(other) != null
+                ? courseCodeOf(other) + " (" + other.getScheduleType() + ", "
+                        + DAY_NAME[other.getDayOfWeek()] + " P" + other.getStartSlot().getPeriodNo()
+                        + (other.getEndSlot().getPeriodNo() != other.getStartSlot().getPeriodNo()
+                                ? "-P" + other.getEndSlot().getPeriodNo() : "")
+                        + ")"
+                : String.valueOf(other.getScheduleType());
+        return movedLabel + " would conflict with " + otherLabel + " on day " + day + ": " + reason;
+    }
+
+    private static final String[] DAY_NAME = {"", "Mon", "Tue", "Wed", "Thu", "Fri"};
+
     @Transactional
     public void delete(UUID scheduleId) {
         hodAccessService.requireHod();
@@ -233,6 +451,7 @@ public class ClassScheduleService {
             Set<UUID> candidateStaff = new HashSet<>();
             Set<UUID> candidateSections = new HashSet<>();
             String candidateCourse;
+            Course candidateCourseEntity = null;
             UUID candidateGroupId = request.teachingGroupId();
             if (candidateGroupId != null) {
                 TeachingAssignmentGroup group = teachingGroupRepository.findById(candidateGroupId)
@@ -242,12 +461,14 @@ public class ClassScheduleService {
                     candidateSections.add(m.getAssignment().getSection().getSectionId());
                 }
                 candidateCourse = group.getCourse().getCourseCode();
+                candidateCourseEntity = group.getCourse();
             } else {
                 TeachingAssignment assignment = assignmentRepository.findById(request.teachingAssignmentId())
                         .orElseThrow();
                 candidateStaff.add(assignment.getStaff().getStaffId());
                 candidateSections.add(assignment.getSection().getSectionId());
                 candidateCourse = assignment.getCourse().getCourseCode();
+                candidateCourseEntity = assignment.getCourse();
             }
 
             for (ClassSchedule other : daySchedules) {
@@ -273,12 +494,24 @@ public class ClassScheduleService {
                 if (overlaps(startSlot, endSlot, List.of(other))) {
                     Set<UUID> otherStaff = coveredStaff(other);
                     Set<UUID> otherSections = coveredSections(other);
+                    // Elective co-location: same elective group (is_required=false,
+                    // same semester) may share a window ONLY when the window is
+                    // IDENTICAL (same day/start/end) and the lecturers differ;
+                    // the lecturer conflict rule always wins.
+                    boolean sameElectiveGroup = !special && other.getTeachingAssignment() != null
+                            && sameElectiveGroup(candidateCourseEntity, other.getTeachingAssignment().getCourse());
+                    boolean identicalWindow = startSlot.getDisplayOrder() == other.getStartSlot().getDisplayOrder()
+                            && endSlot.getDisplayOrder() == other.getEndSlot().getDisplayOrder();
+                    boolean sectionOverlap = !Collections.disjoint(candidateSections, otherSections);
                     if (special || !Collections.disjoint(candidateStaff, otherStaff)
-                            || !Collections.disjoint(candidateSections, otherSections)) {
+                            || (!sameElectiveGroup && sectionOverlap)
+                            || (sameElectiveGroup && !identicalWindow && sectionOverlap)) {
                         String reason = special ? "a " + other.getScheduleType() + " period"
                                 : (!Collections.disjoint(candidateStaff, otherStaff)
                                         ? "another engagement of the same lecturer"
-                                        : "another schedule for the same section");
+                                        : (sameElectiveGroup
+                                                ? "a partial overlap of an elective-group window"
+                                                : "another schedule for the same section"));
                         throw new BusinessRuleException("Schedule conflicts with " + reason
                                 + " on day " + request.dayOfWeek());
                     }
@@ -343,6 +576,21 @@ public class ClassScheduleService {
             return s.getTeachingGroup().getCourse().getCourseCode();
         }
         return null;
+    }
+
+    /**
+     * True when the candidate course and the other schedule's course belong to the
+     * same elective group: both is_required=false and assigned to the same semester.
+     * Groups of electives may co-locate on identical windows when lecturers differ.
+     */
+    private static boolean sameElectiveGroup(Course candidate, Course other) {
+        if (candidate == null || other == null
+                || candidate.isRequired() || other.isRequired()) {
+            return false;
+        }
+        Semester sa = candidate.getSemester();
+        Semester sb = other.getSemester();
+        return sa != null && sb != null && sa.getSemesterId().equals(sb.getSemesterId());
     }
 
     static boolean overlaps(TimeSlot start, TimeSlot end, List<ClassSchedule> others) {

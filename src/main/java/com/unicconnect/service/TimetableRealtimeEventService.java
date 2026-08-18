@@ -40,12 +40,18 @@ public class TimetableRealtimeEventService {
     // Event names (SSE data payloads carry a "type" field).
     public static final String MANAGEMENT_STARTED = "TIMETABLE_MANAGEMENT_STARTED";
     public static final String LOBBY_CANCELLED = "LOBBY_CANCELLED";
+    public static final String LOBBY_MEMBER_JOINED = "LOBBY_MEMBER_JOINED";
     public static final String GENERATION_COMPLETED = "GENERATION_COMPLETED";
+    public static final String GENERATION_STARTED = "GENERATION_STARTED";
+    public static final String GENERATION_FAILED = "GENERATION_FAILED";
     public static final String SCHEDULE_CREATED = "SCHEDULE_CREATED";
     public static final String SCHEDULE_UPDATED = "SCHEDULE_UPDATED";
     public static final String SCHEDULE_DELETED = "SCHEDULE_DELETED";
     public static final String SCHEDULE_LOCKED = "SCHEDULE_LOCKED";
     public static final String SCHEDULE_UNLOCKED = "SCHEDULE_UNLOCKED";
+    public static final String DRAG_STARTED = "DRAG_STARTED";
+    public static final String DRAG_MOVED = "DRAG_MOVED";
+    public static final String DRAG_ENDED = "DRAG_ENDED";
     public static final String TIMETABLE_PUBLISHED = "TIMETABLE_PUBLISHED";
     public static final String TIMETABLE_DELETED = "TIMETABLE_DELETED";
     public static final String COURSE_REQUIREMENT_CREATED = "COURSE_REQUIREMENT_CREATED";

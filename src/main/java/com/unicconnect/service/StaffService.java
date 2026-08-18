@@ -83,7 +83,7 @@ public class StaffService {
     }
 
     public StaffResponse getCurrentStaff() {
-        Staff staff = staffRepository.findByUser_UserIdWithDetails(securityUtil.currentUserId())
+        Staff staff = staffRepository.findByUser_UserId(securityUtil.currentUserId())
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "No staff profile found for the current user"));
         return toResponse(staff, assignmentRepository.findByStaff_StaffId(staff.getStaffId()));

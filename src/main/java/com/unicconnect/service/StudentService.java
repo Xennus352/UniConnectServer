@@ -85,13 +85,6 @@ public class StudentService {
         return toResponse(findStudent(studentId));
     }
 
-    public StudentResponse getCurrentStudent() {
-        Student student = studentRepository.findByUser_UserIdWithDetails(securityUtil.currentUserId())
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "No student profile found for the current user"));
-        return toResponse(student);
-    }
-
     public List<ScheduleResponse> getSchedules(UUID studentId, UUID termId) {
         Student student = findStudent(studentId);
         if (student.getSection() == null) {

@@ -109,6 +109,13 @@ public class TimetableLobbyService {
         if (member.getJoinedAt() == null) {
             member.setJoinedAt(Instant.now());
             memberRepository.save(member);
+            // Push an instant join notification so every waiting-room view
+            // (leader + other members) updates its progress bar without polling.
+            realtimeEventService.publish(lobby.getLobbyId(),
+                    TimetableRealtimeEventService.LOBBY_MEMBER_JOINED,
+                    Map.of("lobbyId", lobby.getLobbyId(),
+                            "staffId", staff.getStaffId().toString(),
+                            "staffName", staff.getStaffName()));
         }
         return toResponse(lobby);
     }

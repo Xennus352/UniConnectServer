@@ -4,7 +4,6 @@ import com.unicconnect.dto.request.MeetingRequirementRequest;
 import com.unicconnect.dto.response.MeetingRequirementResponse;
 import com.unicconnect.entity.Course;
 import com.unicconnect.entity.CourseMeetingRequirement;
-import com.unicconnect.exception.DuplicateResourceException;
 import com.unicconnect.exception.ResourceNotFoundException;
 import com.unicconnect.exception.ValidationException;
 import com.unicconnect.repository.CourseMeetingRequirementRepository;
@@ -109,10 +108,12 @@ public class CourseMeetingRequirementService {
     static MeetingRequirementResponse createInternal(CourseMeetingRequirementRepository repository,
                                                      Course course, MeetingRequirementRequest request) {
         validate(request);
-        if (repository.existsByCourse_CourseIdAndMeetingType(course.getCourseId(), request.meetingType())) {
-            throw new DuplicateResourceException(
-                    "Meeting requirement already exists for course " + course.getCourseCode()
-                            + " and type " + request.meetingType());
+        int total = currentTotalPeriods(repository, course.getCourseId())
+                + request.sessionsPerWeek() * request.periodsPerSession();
+        if (total > 4) {
+            throw new ValidationException(
+                    "Total weekly periods for course " + course.getCourseCode()
+                            + " would exceed 4 (a course requires exactly 4 weekly periods across all meeting components)");
         }
         CourseMeetingRequirement requirement = new CourseMeetingRequirement();
         requirement.setCourse(course);
@@ -131,16 +132,24 @@ public class CourseMeetingRequirementService {
         if (!requirement.getCourse().getCourseId().equals(courseId)) {
             throw new ResourceNotFoundException("Meeting requirement not found for this course");
         }
-        if (requirement.getMeetingType() != request.meetingType()) {
-            if (repository.existsByCourse_CourseIdAndMeetingType(courseId, request.meetingType())) {
-                throw new DuplicateResourceException(
-                        "Meeting requirement already exists for this course and type " + request.meetingType());
-            }
-            requirement.setMeetingType(request.meetingType());
+        int others = currentTotalPeriods(repository, courseId)
+                - requirement.getSessionsPerWeek() * requirement.getPeriodsPerSession();
+        int total = others + request.sessionsPerWeek() * request.periodsPerSession();
+        if (total > 4) {
+            throw new ValidationException(
+                    "Total weekly periods for course " + requirement.getCourse().getCourseCode()
+                            + " would exceed 4 (a course requires exactly 4 weekly periods across all meeting components)");
         }
+        requirement.setMeetingType(request.meetingType());
         requirement.setSessionsPerWeek(request.sessionsPerWeek());
         requirement.setPeriodsPerSession(request.periodsPerSession());
         return toResponse(repository.save(requirement));
+    }
+
+    private static int currentTotalPeriods(CourseMeetingRequirementRepository repository, UUID courseId) {
+        return repository.findByCourse_CourseId(courseId).stream()
+                .mapToInt(r -> r.getSessionsPerWeek() * r.getPeriodsPerSession())
+                .sum();
     }
 
     private static void validate(MeetingRequirementRequest request) {

@@ -13,8 +13,6 @@ public interface StudentRepository extends JpaRepository<Student, UUID> {
     Optional<Student> findByRollNo(String rollNo);
     boolean existsByRollNo(String rollNo);
     Optional<Student> findByUser_UserId(UUID userId);
-    @Query("select s from Student s" + FETCH_JOINS + " where s.user.userId = :userId")
-    Optional<Student> findByUser_UserIdWithDetails(@Param("userId") UUID userId);
     List<Student> findByMajor_MajorId(UUID majorId);
     List<Student> findBySemester_SemesterId(UUID semesterId);
     List<Student> findBySection_SectionId(UUID sectionId);
