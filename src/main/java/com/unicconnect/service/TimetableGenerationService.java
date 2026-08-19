@@ -65,6 +65,10 @@ public class TimetableGenerationService {
     private static final LocalTime LUNCH_END = LocalTime.of(12, 0);
     private static final LocalTime LUNCH_START = LocalTime.of(13, 0);
     private static final int MAX_BACKTRACK_ITERATIONS_PER_SEMESTER = 10_000_000;
+    private static final int MAX_SOLVE_ATTEMPTS = 4;
+    private static final int MAX_ITERATIONS_PER_ATTEMPT = 1_500_000;
+    private static final ThreadLocal<Random> SOLVE_RANDOM =
+            ThreadLocal.withInitial(() -> new Random(0x5EED));
 
     private final GenerationSessionRepository generationRepository;
     private final TeachingAssignmentRepository assignmentRepository;
@@ -435,8 +439,8 @@ public class TimetableGenerationService {
     /**
      * Heavy generation worker. Runs in its own transaction on a background
      * thread (invoked through the Spring proxy so {@code @Transactional}
-     * applies). Any exception rolls back the worker transaction — previously
-     * stored schedules are preserved — and the caller then flips the session
+     * applies). Any exception rolls back the worker transaction â€” previously
+     * stored schedules are preserved â€” and the caller then flips the session
      * to FAILED via {@link #markGenerationFailed}.
      */
     public GenerationSessionResponse runGenerationBackground(UUID generationId) {
@@ -513,7 +517,7 @@ public class TimetableGenerationService {
         List<SchedulingUnit> units = buildSchedulingUnits(
                 singletons, membersByGroup, requirementsByCourse, scope);
 
-        // Backtracking solver — solve per-semester for performance
+        // Backtracking solver â€” solve per-semester for performance
         List<ClassSchedule> created = new ArrayList<>();
         List<String> failureReport = new ArrayList<>();
         ConflictGrid grid = new ConflictGrid();
@@ -832,9 +836,11 @@ public class TimetableGenerationService {
             Set<UUID> staffIds = new HashSet<>();
             Set<UUID> sectionIds = new HashSet<>();
             for (TeachingAssignmentGroupMember m : members) {
+                if (!inScope(m.getAssignment(), scope)) continue;
                 staffIds.add(m.getAssignment().getStaff().getStaffId());
                 sectionIds.add(m.getAssignment().getSection().getSectionId());
             }
+            if (sectionIds.isEmpty()) continue;
 
             List<CourseMeetingRequirement> reqs =
                     requirementsByCourse.getOrDefault(course.getCourseId(), List.of());
@@ -888,9 +894,10 @@ public class TimetableGenerationService {
             bySemester.computeIfAbsent(u.semesterId, k -> new ArrayList<>()).add(u);
         }
 
-        // Weekday COURSE-load accounting per section (days 1-5), shared across
-        // all semester batches so balance is computed on the section as a whole.
-        Map<UUID, int[]> sectionDayLoads = new HashMap<>();
+        // Weekday COURSE-load accounting per section (days 1-5), keyed per
+        // (semester, section) so balance is computed on the section's own
+        // semester load, not mixed across semesters.
+        Map<String, int[]> sectionDayLoads = new HashMap<>();
 
         for (Map.Entry<UUID, List<SchedulingUnit>> entry : bySemester.entrySet()) {
             List<SchedulingUnit> semUnits = entry.getValue();
@@ -904,7 +911,7 @@ public class TimetableGenerationService {
             int[] counter = {0};
             Map<Object, Set<Integer>> usedDaysByCourse = new HashMap<>();
             Map<SchedulingUnit, Integer> placedCounts = new HashMap<>();
-            boolean ok = solveRecursive(semUnits, slots, generation, created, failureReport, counter, grid, usedDaysByCourse, placedCounts, sectionDayLoads);
+            boolean ok = solveWithRestarts(semUnits, slots, generation, created, failureReport, grid, sectionDayLoads);
             if (!ok) {
                 if (failureReport.isEmpty()) {
                     failureReport.add("No valid timetable exists for the given constraints.");
@@ -988,19 +995,53 @@ public class TimetableGenerationService {
         return u.assignment != null ? u.assignment : u.group;
     }
 
+    /**
+     * Randomized-restart wrapper around the backtracking search. Symmetric
+     * elective/combined configurations can make a single deterministic pass
+     * thrash; restarting with a different unit order and option perturbation
+     * (bounded total work) escapes those plateaus.
+     */
+    private boolean solveWithRestarts(List<SchedulingUnit> semUnits, List<TimeSlot> slots,
+                                      GenerationSession generation, List<ClassSchedule> created,
+                                      List<String> failureReport, ConflictGrid grid,
+                                      Map<String, int[]> sectionDayLoads) {
+        for (int attempt = 0; attempt < MAX_SOLVE_ATTEMPTS; attempt++) {
+            SOLVE_RANDOM.set(new Random(0x5EED + attempt * 101L));
+            List<SchedulingUnit> attemptUnits = new ArrayList<>(semUnits);
+            if (attempt > 0) {
+                Collections.shuffle(attemptUnits, SOLVE_RANDOM.get());
+            }
+            int[] counter = {0};
+            boolean[] iterationLimitReached = {false};
+            Map<Object, Set<Integer>> usedDaysByCourse = new HashMap<>();
+            Map<SchedulingUnit, Integer> placedCounts = new HashMap<>();
+            if (solveRecursive(attemptUnits, slots, generation, created, failureReport,
+                    counter, iterationLimitReached, grid, usedDaysByCourse, placedCounts,
+                    sectionDayLoads)) {
+                return true;
+            }
+            if (!iterationLimitReached[0]) {
+                return false;
+            }
+            failureReport.clear();
+        }
+        if (failureReport.isEmpty()) {
+            failureReport.add("No valid timetable exists for the given constraints.");
+        }
+        return false;
+    }
+
     private boolean solveRecursive(List<SchedulingUnit> units, List<TimeSlot> slots,
                                     GenerationSession generation, List<ClassSchedule> created,
-                                    List<String> failureReport, int[] counter, ConflictGrid grid,
+                                    List<String> failureReport, int[] counter,
+                                    boolean[] iterationLimitReached, ConflictGrid grid,
                                     Map<Object, Set<Integer>> usedDaysByCourse,
                                     Map<SchedulingUnit, Integer> placedCounts,
-                                    Map<UUID, int[]> sectionDayLoads) {
+                                    Map<String, int[]> sectionDayLoads) {
         if (unitIdx(units, placedCounts) >= units.size()) return true;
 
-        if (++counter[0] > MAX_BACKTRACK_ITERATIONS_PER_SEMESTER) {
-            if (failureReport.isEmpty()) {
-                failureReport.add("Generation search exceeded iteration limit for a semester. "
-                        + "The constraint space may be too large or infeasible.");
-            }
+        if (++counter[0] > MAX_ITERATIONS_PER_ATTEMPT) {
+            iterationLimitReached[0] = true;
             return false;
         }
         // Most-constrained-first: find unscheduled unit with fewest valid placements
@@ -1029,6 +1070,16 @@ public class TimetableGenerationService {
             optionScores.put(opt, evaluatePlacement(bestUnit, opt, units, slots, grid, usedDaysByCourse, placedCounts, sectionDayLoads));
         }
         options.sort((a, b) -> Integer.compare(optionScores.get(b), optionScores.get(a)));
+        // Perturb the ranked order slightly: keeps the heuristic preference
+        // while breaking the systematic exploration of symmetric placements.
+        Random rand = SOLVE_RANDOM.get();
+        for (int i = 1; i < options.size(); i++) {
+            if (rand.nextDouble() < 0.25) {
+                PlacementOption tmp = options.get(i);
+                options.set(i, options.get(i - 1));
+                options.set(i - 1, tmp);
+            }
+        }
 
         for (PlacementOption opt : options) {
             int occurrence = usedDays.size() + 1;
@@ -1040,7 +1091,7 @@ public class TimetableGenerationService {
                     opt.day, opt.startOrder, opt.endOrder, bestUnit.electiveGroup, bestUnit,
                     occurrence);
             for (UUID sectionId : bestUnit.sectionIds) {
-                int[] loads = sectionDayLoads.computeIfAbsent(sectionId, k -> new int[6]);
+                int[] loads = sectionDayLoads.computeIfAbsent(bestUnit.semesterId + "|" + sectionId, k -> new int[6]);
                 loads[opt.day] += periodCount;
             }
             usedDays.add(opt.day);
@@ -1048,7 +1099,7 @@ public class TimetableGenerationService {
 
             // Forward checking: verify remaining units still have at least one valid placement
             if (forwardCheck(units, slots, grid, usedDaysByCourse, placedCounts)) {
-                if (solveRecursive(units, slots, generation, created, failureReport, counter, grid, usedDaysByCourse, placedCounts, sectionDayLoads)) {
+                if (solveRecursive(units, slots, generation, created, failureReport, counter, iterationLimitReached, grid, usedDaysByCourse, placedCounts, sectionDayLoads)) {
                     return true;
                 }
             }
@@ -1063,7 +1114,7 @@ public class TimetableGenerationService {
                     opt.day, opt.startOrder, opt.endOrder, bestUnit.electiveGroup, bestUnit,
                     occurrence);
             for (UUID sectionId : bestUnit.sectionIds) {
-                int[] loads = sectionDayLoads.get(sectionId);
+                int[] loads = sectionDayLoads.get(bestUnit.semesterId + "|" + sectionId);
                 if (loads != null) {
                     loads[opt.day] -= periodCount;
                 }
@@ -1154,7 +1205,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                                    List<TimeSlot> slots, ConflictGrid grid,
                                    Map<Object, Set<Integer>> usedDaysByCourse,
                                    Map<SchedulingUnit, Integer> placedCounts,
-                                   Map<UUID, int[]> sectionDayLoads) {
+                                   Map<String, int[]> sectionDayLoads) {
         // Temporarily place and count remaining options for other units
         int occurrence = usedDaysByCourse.getOrDefault(courseKey(unit), new HashSet<>()).size() + 1;
         grid.place(unit.staffIds, unit.sectionIds, unit.semesterId, opt.day, opt.startOrder, opt.endOrder,
@@ -1165,20 +1216,11 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
         tempUsedDays.put(courseKey(unit), newUsedDays);
 
         int totalOptions = 0;
-        for (SchedulingUnit u : units) {
-            if (u == unit) continue;
-            if (placedCounts.getOrDefault(u, 0) >= u.sessionsPerWeek) continue;
-
-            Set<Integer> used = tempUsedDays.getOrDefault(courseKey(u), new HashSet<>());
-            List<PlacementOption> opts = generateValidPlacements(u, used, slots, grid);
-            totalOptions += opts.size();
-            if (opts.isEmpty()) {
-                // This placement kills another unit's options - heavily penalize
-                grid.remove(unit.staffIds, unit.sectionIds, unit.semesterId, opt.day, opt.startOrder, opt.endOrder,
-                        unit.electiveGroup, unit, occurrence);
-                return -10000;
-            }
-        }
+        // Cheap local heuristic: how many valid windows does THIS unit still
+        // have after this placement? (Same spirit as the previous all-units
+        // count, but ~1 unit instead of ~60 -> the search runs far faster.)
+        List<PlacementOption> after = generateValidPlacements(unit, newUsedDays, slots, grid);
+        totalOptions = after.size();
 
         grid.remove(unit.staffIds, unit.sectionIds, unit.semesterId, opt.day, opt.startOrder, opt.endOrder,
                 unit.electiveGroup, unit, occurrence);
@@ -1198,11 +1240,11 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
      * in the load arrays.
      */
     private int dayBalancePenalty(SchedulingUnit unit, PlacementOption opt,
-                                  Map<UUID, int[]> sectionDayLoads) {
+                                  Map<String, int[]> sectionDayLoads) {
         int worst = 0;
         int periodCount = opt.endOrder - opt.startOrder + 1;
         for (UUID sectionId : unit.sectionIds) {
-            int[] base = sectionDayLoads.get(sectionId);
+            int[] base = sectionDayLoads.get(unit.semesterId + "|" + sectionId);
             int[] loads = base == null ? new int[6] : base.clone();
             loads[opt.day] += periodCount;
             int penalty = dayImbalancePenalty(loads);
@@ -1330,11 +1372,11 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                         reasons.add(sameGroup
                                 ? "ELECTIVE_SHARE_NOT_ALLOWED " + (cc != null ? cc : "unknown")
                                 + " (P" + otherStart + "-P" + otherEnd
-                                + ") — same lecturer; lecturer conflicts always win"
+                                + ") â€” same lecturer; lecturer conflicts always win"
                                 : "STAFF_CONFLICT " + (cc != null ? cc : "unknown")
                                 + " (P" + otherStart + "-P" + otherEnd + ")");
                     }
-                    // Section conflicts are scoped by semester — different-semester students
+                    // Section conflicts are scoped by semester â€” different-semester students
                     // sharing the same section label (e.g. Section A) don't actually conflict.
                     UUID sSemId = scheduleSemesterId(s);
                     if (unit.semesterId != null && unit.semesterId.equals(sSemId)
@@ -1343,7 +1385,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                         reasons.add(sameGroup
                                 ? "ELECTIVE_SHARE_NOT_ALLOWED " + (cc != null ? cc : "unknown")
                                 + " (P" + otherStart + "-P" + otherEnd
-                                + ") — only IDENTICAL windows may be shared by one elective group"
+                                + ") â€” only IDENTICAL windows may be shared by one elective group"
                                 : "SECTION_CONFLICT " + (cc != null ? cc : "unknown")
                                 + " (P" + otherStart + "-P" + otherEnd + ")");
                     }
@@ -1411,14 +1453,16 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
         for (int i = startIdx; i < startIdx + perSession - 1; i++) {
             var end = slots.get(i).getEndTime();
             var nextStart = slots.get(i + 1).getStartTime();
+            // The lunch break (12:00-13:00) falls between period 3 and 4.
+            // A 2-period session may bridge it as a fallback when no fully
+            // consecutive window exists (original delivered behaviour).
             if (!end.equals(nextStart)) {
-                if (!(end.equals(LUNCH_END) && nextStart.equals(LUNCH_START))) {
-                    // Timezone-independent fallback: the lunch/dinner break is the gap
-                    // between period 3 and period 4, regardless of rendered times.
-                    if (slots.get(i).getPeriodNo() != 3 || slots.get(i + 1).getPeriodNo() != 4) {
-                        return false;
-                    }
+                int curPeriod = slots.get(i).getPeriodNo();
+                int nextPeriod = slots.get(i + 1).getPeriodNo();
+                if (curPeriod == 3 && nextPeriod == 4) {
+                    return true;
                 }
+                return false;
             }
         }
         return true;
@@ -1543,7 +1587,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
         if (generation.getStatus() != GenerationStatus.COMPLETED) {
             throw new BusinessRuleException("Only a completed generation can be published");
         }
-        List<ClassSchedule> schedules = scheduleRepository.findByGeneration_GenerationId(generationId);
+        List<ClassSchedule> schedules = scheduleRepository.findByGeneration_GenerationIdWithDetails(generationId);
         if (schedules.isEmpty()) {
             throw new BusinessRuleException("Cannot publish an empty timetable");
         }
@@ -1666,7 +1710,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                         "Only the lobby leader or joined lobby members can access this shared draft");
             }
         }
-        return scheduleRepository.findByGeneration_GenerationId(generationId).stream()
+        return scheduleRepository.findByGeneration_GenerationIdWithDetails(generationId).stream()
                 .sorted(Comparator.comparing(ClassSchedule::getDayOfWeek)
                         .thenComparing(s -> s.getStartSlot().getDisplayOrder()))
                 .map(ClassScheduleService::toResponse).toList();
@@ -1698,7 +1742,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                     if (b.getScheduleType() == ScheduleType.COURSE
                             && a.getTeachingGroup() != null && b.getTeachingGroup() != null
                             && a.getTeachingGroup().getGroupId().equals(b.getTeachingGroup().getGroupId())) {
-                        conflicts.add(describeConflictSlot(a) + " — " + ClassScheduleService.courseCodeOf(a)
+                        conflicts.add(describeConflictSlot(a) + " â€” " + ClassScheduleService.courseCodeOf(a)
                                 + " is scheduled more than once on " + DAY_NAMES[day] + " for the same section");
                         continue;
                     }
@@ -1707,7 +1751,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                             && ClassScheduleService.courseCodeOf(a).equals(ClassScheduleService.courseCodeOf(b))
                             && !Collections.disjoint(ClassScheduleService.coveredSections(a),
                                     ClassScheduleService.coveredSections(b))) {
-                        conflicts.add(describeConflictSlot(a) + " — " + ClassScheduleService.courseCodeOf(a)
+                        conflicts.add(describeConflictSlot(a) + " â€” " + ClassScheduleService.courseCodeOf(a)
                                 + " is scheduled more than once on " + DAY_NAMES[day] + " for the same section");
                         continue;
                     }
@@ -1720,11 +1764,17 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                         reason = "a special period (LMS/ASSIGNMENT) cannot share this slot with a course";
                     } else if (!Collections.disjoint(ClassScheduleService.coveredStaff(a),
                             ClassScheduleService.coveredStaff(b))) {
-                        // The lecturer conflict rule always wins — even within an elective group.
+                        // The lecturer conflict rule always wins â€” even within an elective group.
                         conflict = true;
                         reason = "the same lecturer is double-booked";
                     } else if (Collections.disjoint(ClassScheduleService.coveredSections(a),
                             ClassScheduleService.coveredSections(b))) {
+                        conflict = false;
+                        reason = null;
+                    } else if (!sameSemester(a, b)) {
+                        // Sections are shared rows across semesters: different-semester
+                        // cohorts may legitimately co-exist in the same slot (the solver
+                        // is semester-scoped); only same-semester co-existence conflicts.
                         conflict = false;
                         reason = null;
                     } else {
@@ -1734,7 +1784,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                         reason = conflict ? "the same section is double-booked" : null;
                     }
                     if (conflict) {
-                        conflicts.add(describeConflictSlot(a) + " — " + scheduleLabel(a)
+                        conflicts.add(describeConflictSlot(a) + " â€” " + scheduleLabel(a)
                                 + " conflicts with " + scheduleLabel(b) + " (" + reason + ")");
                     }
                 }
@@ -1748,6 +1798,25 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
     private boolean overlapsSlots(ClassSchedule a, ClassSchedule b) {
         return a.getStartSlot().getDisplayOrder() <= b.getEndSlot().getDisplayOrder()
                 && b.getStartSlot().getDisplayOrder() <= a.getEndSlot().getDisplayOrder();
+    }
+
+    /** Semester of the course behind a schedule (assignment or group). */
+    private static Semester semesterOf(ClassSchedule s) {
+        if (s.getTeachingAssignment() != null) {
+            return s.getTeachingAssignment().getCourse().getSemester();
+        }
+        if (s.getTeachingGroup() != null) {
+            return s.getTeachingGroup().getCourse().getSemester();
+        }
+        return null;
+    }
+
+    /** True when both schedules belong to the same semester (or semester is unknown). */
+    private static boolean sameSemester(ClassSchedule a, ClassSchedule b) {
+        Semester sa = semesterOf(a);
+        Semester sb = semesterOf(b);
+        if (sa == null || sb == null) return true;
+        return sa.getSemesterId().equals(sb.getSemesterId());
     }
 
     private String scheduleLabel(ClassSchedule s) {

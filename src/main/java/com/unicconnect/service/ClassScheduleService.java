@@ -301,9 +301,13 @@ public class ClassScheduleService {
                     boolean identicalWindow = start.getDisplayOrder() == other.getStartSlot().getDisplayOrder()
                             && end.getDisplayOrder() == other.getEndSlot().getDisplayOrder();
                     boolean sectionOverlap = !Collections.disjoint(candidateSections, otherSections);
+                    // Sections are shared rows across semesters: different-semester
+                    // cohorts may legitimately co-exist in one slot (the solver is
+                    // semester-scoped); only same-semester co-existence conflicts.
+                    boolean sameSemester = sameSemesterCourse(candidateCourseEntity, other);
                     if (special || !Collections.disjoint(candidateStaff, otherStaff)
-                            || (!sameElectiveGroup && sectionOverlap)
-                            || (sameElectiveGroup && !identicalWindow && sectionOverlap)) {
+                            || (sameSemester && !sameElectiveGroup && sectionOverlap)
+                            || (sameSemester && sameElectiveGroup && !identicalWindow && sectionOverlap)) {
                         String reason = special ? "a " + other.getScheduleType() + " period"
                                 : (!Collections.disjoint(candidateStaff, otherStaff)
                                         ? "another engagement of the same lecturer"
@@ -503,9 +507,13 @@ public class ClassScheduleService {
                     boolean identicalWindow = startSlot.getDisplayOrder() == other.getStartSlot().getDisplayOrder()
                             && endSlot.getDisplayOrder() == other.getEndSlot().getDisplayOrder();
                     boolean sectionOverlap = !Collections.disjoint(candidateSections, otherSections);
+                    // Sections are shared rows across semesters: different-semester
+                    // cohorts may legitimately co-exist in one slot (the solver is
+                    // semester-scoped); only same-semester co-existence conflicts.
+                    boolean sameSemester = sameSemesterCourse(candidateCourseEntity, other);
                     if (special || !Collections.disjoint(candidateStaff, otherStaff)
-                            || (!sameElectiveGroup && sectionOverlap)
-                            || (sameElectiveGroup && !identicalWindow && sectionOverlap)) {
+                            || (sameSemester && !sameElectiveGroup && sectionOverlap)
+                            || (sameSemester && sameElectiveGroup && !identicalWindow && sectionOverlap)) {
                         String reason = special ? "a " + other.getScheduleType() + " period"
                                 : (!Collections.disjoint(candidateStaff, otherStaff)
                                         ? "another engagement of the same lecturer"
@@ -591,6 +599,24 @@ public class ClassScheduleService {
         Semester sa = candidate.getSemester();
         Semester sb = other.getSemester();
         return sa != null && sb != null && sa.getSemesterId().equals(sb.getSemesterId());
+    }
+
+    /** Semester of the course behind a schedule (assignment or group). */
+    private static Semester semesterOf(ClassSchedule s) {
+        if (s.getTeachingAssignment() != null) {
+            return s.getTeachingAssignment().getCourse().getSemester();
+        }
+        if (s.getTeachingGroup() != null) {
+            return s.getTeachingGroup().getCourse().getSemester();
+        }
+        return null;
+    }
+
+    /** True when the candidate course and the other schedule are same-semester (or unknown). */
+    private static boolean sameSemesterCourse(Course candidate, ClassSchedule other) {
+        Semester os = semesterOf(other);
+        if (candidate == null || candidate.getSemester() == null || os == null) return true;
+        return candidate.getSemester().getSemesterId().equals(os.getSemesterId());
     }
 
     static boolean overlaps(TimeSlot start, TimeSlot end, List<ClassSchedule> others) {

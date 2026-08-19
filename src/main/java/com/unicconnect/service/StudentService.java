@@ -6,8 +6,11 @@ import com.unicconnect.dto.response.AttendanceResponse;
 import com.unicconnect.dto.response.ResultDocumentResponse;
 import com.unicconnect.dto.response.ScheduleResponse;
 import com.unicconnect.dto.response.StudentResponse;
+import com.unicconnect.entity.Course;
+import com.unicconnect.entity.GenerationStatus;
 import com.unicconnect.entity.RegistrationStatus;
 import com.unicconnect.entity.Student;
+import com.unicconnect.entity.TeachingAssignment;
 import com.unicconnect.entity.TermStatus;
 import com.unicconnect.entity.User;
 import com.unicconnect.exception.DuplicateResourceException;
@@ -97,8 +100,20 @@ public class StudentService {
                     .orElseThrow(() -> new ResourceNotFoundException("No active academic term"))
                     .getTermId();
         }
+        // A student sees only the officially PUBLISHED timetable of their own
+        // semester and section. Sections are shared rows across semesters, so
+        // the semester of the schedule's course narrows the result set.
+        UUID studentSemesterId = student.getSemester() != null ? student.getSemester().getSemesterId() : null;
         return classScheduleRepository.findByTermAndSectionWithDetails(effectiveTermId, student.getSection().getSectionId())
                 .stream()
+                .filter(s -> s.getGeneration().getStatus() == GenerationStatus.PUBLISHED)
+                .filter(s -> {
+                    if (studentSemesterId == null) return true;
+                    TeachingAssignment ta = s.getTeachingAssignment();
+                    Course co = ta != null ? ta.getCourse() : null;
+                    return co != null && co.getSemester() != null
+                            && studentSemesterId.equals(co.getSemester().getSemesterId());
+                })
                 .map(ClassScheduleService::toResponse)
                 .toList();
     }
