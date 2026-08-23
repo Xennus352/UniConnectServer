@@ -96,12 +96,41 @@ public class WeekdayBalanceTest {
     }
 
     private UUID generate(UUID semesterId, List<UUID> sectionIds) {
-        UUID generationId = generationService.create(new CreateGenerationRequest(TERM_ID, null)).generationId();
-        var resp = generationService.generate(generationId,
+          UUID generationId = generationService.create(new CreateGenerationRequest(TERM_ID, null)).generationId();
+          generationService.generate(generationId,
                 new GenerateTimetableRequest(null,
-                        List.of(new GenerateTimetableRequest.SemesterSelection(semesterId, sectionIds))));
-        assertEquals(GenerationStatus.COMPLETED, resp.status(), "generation must complete");
+                        List.of(new GenerateTimetableRequest.SemesterSelection(semesterId, sectionIds)),
+                        false));
+        // The heavy worker normally runs on generationExecutor behind an
+        // afterCommit hook that never fires inside this rolled-back test
+        // transaction; drive it directly to exercise the identical path.
+        var done = generationService.runGenerationBackground(generationId);
+        assertEquals(GenerationStatus.COMPLETED, done.status(), "generation must complete");
         return generationId;
+    }
+
+    /**
+     * SEC_CT carries persistent deliveries created by earlier live runs; solver
+     * scenarios must see only the courses they stage themselves. Deletions run
+     * inside the rolled-back test transaction, so no data is harmed.
+     */
+    private void pruneSecCtAssignmentsExcept(String... keepCodes) {
+        Set<String> keep = Set.of(keepCodes);
+        List<TeachingAssignment> stale = assignmentRepository
+                .findWithDetailsByTermId(TERM_ID).stream()
+                .filter(a -> SEC_CT.equals(a.getSection().getSectionId()))
+                .filter(a -> !keep.contains(a.getCourse().getCourseCode()))
+                .toList();
+        if (stale.isEmpty()) return;
+        Set<UUID> staleIds = new HashSet<>();
+        for (TeachingAssignment a : stale) staleIds.add(a.getAssignmentId());
+        List<ClassSchedule> linked = scheduleRepository
+                .findBySectionIdWithDetails(SEC_CT).stream()
+                .filter(s -> s.getTeachingAssignment() != null
+                        && staleIds.contains(s.getTeachingAssignment().getAssignmentId()))
+                .toList();
+        scheduleRepository.deleteAll(linked);
+        assignmentRepository.deleteAll(stale);
     }
 
     private List<ClassSchedule> courseOnly(List<ClassSchedule> all) {
@@ -283,6 +312,7 @@ public class WeekdayBalanceTest {
 
     @Test
     void t9_oneOneOneOneBalanced() {
+        pruneSecCtAssignmentsExcept("CT-2234", "CT-2236");
         setCmr("CT-2236", SEC_CT, "LECTURE:4:1");
         List<ClassSchedule> all = courseOnly(scheduleRepository.findByGeneration_GenerationId(generate(SEM4, List.of(SEC_CT))));
         List<ClassSchedule> ct = inSection(all, SEC_CT).stream()
@@ -321,6 +351,7 @@ public class WeekdayBalanceTest {
 
     @Test
     void t11_sparseSectionFourPeriodsCompletes() {
+        pruneSecCtAssignmentsExcept("CT-2234", "CT-2236");
         // Sem4/CT reduced to 4 COURSE periods in 4 sessions: two courses at 2x1.
         // 4 sessions cannot cover five weekdays - generation must still COMPLETE
         // without any hard five-day constraint.

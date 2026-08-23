@@ -87,6 +87,9 @@ public class TimetableGenerationService {
     private final TimetableRealtimeEventService realtimeEventService;
     private final ObjectMapper objectMapper;
     private final TimetableGenerationService self;
+    private final CourseRepository courseRepository;
+    private final CurriculumEligibilityService curriculumEligibilityService;
+    private final StaffRepository staffRepository;
     private final ExecutorService generationExecutor = Executors.newFixedThreadPool(2);
 
     public TimetableGenerationService(GenerationSessionRepository generationRepository,
@@ -105,6 +108,9 @@ public class TimetableGenerationService {
                                       TimetableLobbyAccessService lobbyAccessService,
                                       TimetableRealtimeEventService realtimeEventService,
                                       ObjectMapper objectMapper,
+                                      CourseRepository courseRepository,
+                                      CurriculumEligibilityService curriculumEligibilityService,
+                                      StaffRepository staffRepository,
                                       @Lazy TimetableGenerationService self) {
         this.generationRepository = generationRepository;
         this.assignmentRepository = assignmentRepository;
@@ -122,6 +128,9 @@ public class TimetableGenerationService {
         this.lobbyAccessService = lobbyAccessService;
         this.realtimeEventService = realtimeEventService;
         this.objectMapper = objectMapper;
+        this.courseRepository = courseRepository;
+        this.curriculumEligibilityService = curriculumEligibilityService;
+        this.staffRepository = staffRepository;
         this.self = self;
     }
 
@@ -200,24 +209,26 @@ public class TimetableGenerationService {
     }
 
     public GenerationSessionResponse generate(UUID generationId) {
-        return doGenerate(generationId, null, null, null);
+        return doGenerate(generationId, null, null, null, true);
     }
 
     public GenerationSessionResponse generate(UUID generationId, UUID semesterId) {
-        return doGenerate(generationId, semesterId, null, null);
+        return doGenerate(generationId, semesterId, null, null, true);
     }
 
     public GenerationSessionResponse generate(UUID generationId, GenerateTimetableRequest request) {
         return doGenerate(generationId,
                 null,
                 request != null ? request.examTypeId() : null,
-                request != null ? request.semesters() : null);
+                request != null ? request.semesters() : null,
+                request == null || request.shouldAutoBindCurriculum());
     }
 
     // ========== CORE GENERATION (backtracking) ==========
 
     private GenerationSessionResponse doGenerate(UUID generationId, UUID semesterId, UUID examTypeId,
-                                                 List<GenerateTimetableRequest.SemesterSelection> selections) {
+                                                 List<GenerateTimetableRequest.SemesterSelection> selections,
+                                                 boolean autoBindCurriculum) {
         Staff caller = hodAccessService.requireHod();
         GenerationSession generation = findGeneration(generationId);
         if (generation.getStatus() == GenerationStatus.PUBLISHED) {
@@ -268,10 +279,10 @@ public class TimetableGenerationService {
             scope.put(semesterId, null);
         }
 
-        generation.setScopeJson(toScopeJson(examTypeId, scope));
+        generation.setScopeJson(toScopeJson(examTypeId, scope, autoBindCurriculum));
 
         // Load assignments
-        List<TeachingAssignment> assignments = assignmentRepository
+        List<TeachingAssignment> loadedAssignments = assignmentRepository
                 .findWithDetailsByTermId(generation.getTerm().getTermId()).stream()
                 .filter(a -> a.getAssignmentStatus() != AssignmentStatus.CANCELLED)
                 .filter(a -> inScope(a, scope))
@@ -287,6 +298,17 @@ public class TimetableGenerationService {
         for (TeachingAssignmentGroupMember m : groupMembers) {
             groupedAssignmentIds.add(m.getAssignment().getAssignmentId());
             membersByGroup.computeIfAbsent(m.getGroup().getGroupId(), k -> new ArrayList<>()).add(m);
+        }
+
+        // Curriculum-to-delivery binding: every required course whose eligibility
+        // covers an explicitly selected dedicated-cohort section must enter the
+        // solver with a delivery representation. Missing deliveries are closed by
+        // creating a section-specific TeachingAssignment (the existing mechanism -
+        // no second scheduling path), before validation and unit building run.
+        List<TeachingAssignment> assignments = new ArrayList<>(loadedAssignments);
+        if (autoBindCurriculum) {
+            assignments.addAll(ensureCurriculumDeliveries(
+                    generation.getTerm(), scope, loadedAssignments, membersByGroup));
         }
 
         if (assignments.isEmpty() && membersByGroup.isEmpty()) {
@@ -406,6 +428,7 @@ public class TimetableGenerationService {
         }
         generation.setStatus(GenerationStatus.GENERATING);
         generation.setStartedAt(Instant.now());
+        generation.setFailureReport(null);
         generation.setFinishedAt(null);
         generation = generationRepository.save(generation);
 
@@ -428,7 +451,10 @@ public class TimetableGenerationService {
                     } catch (Exception e) {
                         log.error("Background timetable generation failed for generation {}",
                                 generationId, e);
-                        self.markGenerationFailed(generationId);
+                        self.markGenerationFailed(generationId,
+                                e instanceof BusinessRuleException bre
+                                        ? bre.getMessage()
+                                        : "Unexpected error: " + e.getMessage());
                     }
                 });
             }
@@ -502,6 +528,8 @@ public class TimetableGenerationService {
 
         // Scope validation already ran synchronously; the worker re-derives the
         // exact same unit set and runs the solver.
+        warnUnboundCurriculumDeliveries(generation, scope, assignments, membersByGroup);
+
         List<ClassSchedule> existing = scheduleRepository.findByGeneration_GenerationId(generationId);
         scheduleRepository.deleteAll(existing);
         scheduleRepository.flush();
@@ -531,18 +559,35 @@ public class TimetableGenerationService {
                     + String.join("\n", failureReport));
         }
 
-        // LMS / ASSIGNMENT special periods
-        for (int day = WORKING_DAY_START; day <= WORKING_DAY_END; day++) {
-            int freeSlot = firstFreeSlot(day, slots, created);
-            if (freeSlot >= 0) {
-                placeSpecial(generation, ScheduleType.LMS, freeSlot, day, slots, created);
+        // Optional LMS / ASSIGNMENT fillers: availability is judged against EACH
+        // (semester, section) grid independently - a period occupied by
+        // Semester 2/A must never block Semester 4/A. Best-effort by design:
+        // when a grid has no genuinely free slot its filler is simply omitted;
+        // these entries never displace courses and never affect the curriculum
+        // capacity result.
+        record GridKey(UUID semesterId, UUID sectionId) {}
+        Map<GridKey, List<int[]>> gridFreeSlots = new LinkedHashMap<>();
+        for (ClassSchedule s : created) {
+            Semester sem = semesterOf(s);
+            if (sem == null) continue;
+            for (UUID sectionId : ClassScheduleService.coveredSections(s)) {
+                GridKey key = new GridKey(sem.getSemesterId(), sectionId);
+                gridFreeSlots.computeIfAbsent(key,
+                        k -> freeSlotsFor(k.semesterId(), k.sectionId(), slots, created));
             }
         }
-        for (int day = WORKING_DAY_START; day <= WORKING_DAY_END; day++) {
-            int freeSlot = firstFreeSlot(day, slots, created);
-            if (freeSlot >= 0) {
-                placeSpecial(generation, ScheduleType.ASSIGNMENT, freeSlot, day, slots, created);
-            }
+        Set<String> placedFillers = new HashSet<>();
+        // Scarcest-first ordering: grids with the fewest free slots place their
+        // tightly-balanced fillers first; roomier grids then absorb whatever
+        // shared slots remain while still hitting their own ceil/floor split.
+        List<GridKey> fillerOrder = gridFreeSlots.entrySet().stream()
+                .sorted(Comparator.comparingInt(e -> e.getValue().size()))
+                .map(Map.Entry::getKey)
+                .toList();
+        for (GridKey fillerGrid : fillerOrder) {
+            placeSectionSpecial(generation, fillerGrid.semesterId(),
+                    fillerGrid.sectionId(), gridFreeSlots.get(fillerGrid),
+                    slots, created, placedFillers);
         }
 
         scheduleRepository.saveAll(created);
@@ -563,14 +608,27 @@ public class TimetableGenerationService {
      * its own transaction; safe to call from the worker's catch block.
      */
     public void markGenerationFailed(UUID generationId) {
+        markGenerationFailed(generationId, null);
+    }
+
+    /**
+     * Flips the session to FAILED and persists the human-readable reason so the
+     * UI can show exactly why generation did not produce a timetable.
+     */
+    public void markGenerationFailed(UUID generationId, String failureReport) {
         try {
             GenerationSession generation = findGeneration(generationId);
             generation.setStatus(GenerationStatus.FAILED);
             generation.setFinishedAt(Instant.now());
+            if (failureReport != null && !failureReport.isBlank()) {
+                generation.setFailureReport(failureReport.length() > 8000
+                        ? failureReport.substring(0, 8000) : failureReport);
+            }
             generationRepository.save(generation);
             realtimeEventService.publishForGeneration(generationId,
                     TimetableRealtimeEventService.GENERATION_FAILED,
-                    Map.of("generationId", generationId));
+                    Map.of("generationId", generationId,
+                           "reason", failureReport == null ? "generation failed" : failureReport));
             log.warn("Generation {} marked FAILED after a background worker failure", generationId);
         } catch (ResourceNotFoundException e) {
             log.warn("Generation {} no longer exists; ignoring background worker failure", generationId);
@@ -904,7 +962,7 @@ public class TimetableGenerationService {
 
             // Fast capacity pre-check: count total required periods per section
             // Available: 6 periods x 5 days = 30 period-slots per section
-            if (!checkCapacityPreconditions(semUnits, failureReport)) {
+            if (!checkCapacityPreconditions(semUnits, entry.getKey(), failureReport)) {
                 return false;
             }
 
@@ -922,7 +980,8 @@ public class TimetableGenerationService {
         return true;
     }
 
-    private boolean checkCapacityPreconditions(List<SchedulingUnit> units, List<String> failureReport) {
+    private boolean checkCapacityPreconditions(List<SchedulingUnit> units, UUID semesterId,
+                                               List<String> failureReport) {
         // Sum the required periods of every component of a course first, then apply
         // elective co-location: a group shares windows, so it contributes the load of
         // its largest member course only. Component-level max() would undercount a
@@ -932,35 +991,69 @@ public class TimetableGenerationService {
             periodsByCourse.merge(courseKey(u), u.sessionsPerWeek * u.periodsPerSession, Integer::sum);
         }
         Map<UUID, Map<String, Integer>> electiveMaxBySection = new HashMap<>();
+        Map<UUID, Map<String, Integer>> contributionBySection = new HashMap<>();
         Map<UUID, Integer> periodsBySection = new HashMap<>();
         Map<Object, Set<UUID>> counted = new HashMap<>();
         for (SchedulingUnit u : units) {
             int total = periodsByCourse.get(courseKey(u));
+            String code = courseCodeOfUnit(u);
             for (UUID sectionId : u.sectionIds) {
                 if (!counted.computeIfAbsent(courseKey(u), k -> new HashSet<>()).add(sectionId)) continue;
                 if (u.isElective()) {
                     electiveMaxBySection.computeIfAbsent(sectionId, k -> new HashMap<>())
                             .merge(u.electiveGroup, total, Math::max);
                 } else {
+                    contributionBySection.computeIfAbsent(sectionId, k -> new LinkedHashMap<>())
+                            .merge(code, total, Integer::sum);
                     periodsBySection.merge(sectionId, total, Integer::sum);
                 }
             }
         }
         for (Map.Entry<UUID, Map<String, Integer>> e : electiveMaxBySection.entrySet()) {
-            for (int max : e.getValue().values()) {
-                periodsBySection.merge(e.getKey(), max, Integer::sum);
+            for (Map.Entry<String, Integer> g : e.getValue().entrySet()) {
+                contributionBySection.computeIfAbsent(e.getKey(), k -> new LinkedHashMap<>())
+                        .merge("(elective group) " + g.getKey(), g.getValue(), Integer::sum);
+                periodsBySection.merge(e.getKey(), g.getValue(), Integer::sum);
             }
         }
         // Available per section: 6 periods x 5 days = 30 period-slots
         int maxSlots = 6 * 5;
         for (Map.Entry<UUID, Integer> e : periodsBySection.entrySet()) {
             if (e.getValue() > maxSlots) {
-                failureReport.add("Section requires " + e.getValue()
-                        + " period-slots/week but only " + maxSlots + " are available.");
+                failureReport.add(describeCapacityOverload(
+                        semesterId, e.getKey(), e.getValue(), maxSlots,
+                        contributionBySection.getOrDefault(e.getKey(), Map.of())));
                 return false;
             }
         }
         return true;
+    }
+
+    /** Names the overloaded cohort and lists the courses that consume the slots. */
+    private String describeCapacityOverload(UUID semesterId, UUID sectionId, int required,
+                                            int maxSlots, Map<String, Integer> contributions) {
+        StringBuilder sb = new StringBuilder("Semester ");
+        semesterRepository.findById(semesterId).ifPresent(s -> sb.append(s.getSemesterNo()));
+        sectionRepository.findById(sectionId)
+                .ifPresent(sec -> sb.append(" / Section ").append(sec.getSectionName()));
+        sb.append(" requires ").append(required).append(" period-slots/week but only ")
+          .append(maxSlots).append(" are available (").append(WORKING_DAY_END)
+          .append(" days x ").append(6).append(" periods). Reduce weekly periods of this")
+          .append(" cohort's curriculum by ").append(required - maxSlots).append(".");
+        contributions.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .limit(10)
+                .forEach(c -> sb.append("\n  - ").append(c.getKey()).append(": ")
+                        .append(c.getValue()).append(" periods/week"));
+        return sb.toString();
+    }
+
+    private static String courseCodeOfUnit(SchedulingUnit u) {
+        if (u.group != null && u.group.getCourse() != null) {
+            return u.group.getCourse().getCourseCode();
+        }
+        return u.assignment != null && u.assignment.getCourse() != null
+                ? u.assignment.getCourse().getCourseCode() : "?";
     }
 
 /**
@@ -1470,30 +1563,115 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
 
     // ========== SPECIAL PERIOD PLACEMENT ==========
 
-    private void placeSpecial(GenerationSession generation, ScheduleType type, int preferredSlot,
-                              int day, List<TimeSlot> slots, List<ClassSchedule> created) {
-        if (preferredSlot < 0 || preferredSlot >= slots.size()) return;
-        ClassSchedule schedule = new ClassSchedule();
-        schedule.setGeneration(generation);
-        schedule.setDayOfWeek(day);
-        schedule.setStartSlot(slots.get(preferredSlot));
-        schedule.setEndSlot(slots.get(preferredSlot));
-        schedule.setScheduleType(type);
-        schedule.setScheduleStatus(ScheduleStatus.PENDING);
-        created.add(schedule);
+    /**
+     * Genuinely free (day, period) slots for ONE (semester, section) grid.
+     * Occupancy requires BOTH the semester AND the section to match -
+     * Semester 2/A must never block Semester 4/A.
+     */
+    private List<int[]> freeSlotsFor(UUID semesterId, UUID sectionId,
+                                     List<TimeSlot> slots, List<ClassSchedule> created) {
+        List<int[]> freeSlots = new ArrayList<>();
+        for (int day = WORKING_DAY_START; day <= WORKING_DAY_END; day++) {
+            final int dayOfWeek = day;
+            for (TimeSlot slot : slots) {
+                final int order = slot.getDisplayOrder();
+                boolean occupiedByCourse = created.stream().anyMatch(s ->
+                        s.getScheduleType() == ScheduleType.COURSE
+                                && ClassScheduleService.coveredSections(s).contains(sectionId)
+                                && sameSemesterOfId(s, semesterId)
+                                && s.getDayOfWeek() != null && s.getDayOfWeek() == dayOfWeek
+                                && s.getStartSlot().getDisplayOrder() <= order
+                                && s.getEndSlot().getDisplayOrder() >= order);
+                if (!occupiedByCourse) freeSlots.add(new int[]{day, order});
+            }
+        }
+        return freeSlots;
     }
 
-    private int firstFreeSlot(int day, List<TimeSlot> slots, List<ClassSchedule> created) {
-        for (int i = 0; i < slots.size(); i++) {
-            final int idx = i;
-            final int dayOfWeek = day;
-            boolean occupied = created.stream().anyMatch(s ->
-                    s.getDayOfWeek() == dayOfWeek
-                            && s.getStartSlot().getDisplayOrder() <= idx + 1
-                            && s.getEndSlot().getDisplayOrder() >= idx + 1);
-            if (!occupied) return i;
+    /**
+     * Optional fillers for ONE (semester, section) grid: EVERY genuinely free
+     * (day, period) ends up with exactly one filler, alternating LMS /
+     * ASSIGNMENT so the two counts never differ by more than 1 (LMS first).
+     *
+     * Fillers already sitting on this grid's free slots (placed while
+     * processing earlier grids) count toward the balance; only still-empty
+     * slots receive new rows, so a slot shared by several grids is stored once
+     * (schema keeps specials section-less via
+     * chk_class_schedules_teaching_assignment).
+     * Best-effort safety: fillers never displace, move, or fail courses; the
+     * curriculum capacity calculation never sees them.
+     */
+    private void placeSectionSpecial(GenerationSession generation,
+                                     UUID semesterId, UUID sectionId,
+                                     List<int[]> freeSlots,
+                                     List<TimeSlot> slots,
+                                     List<ClassSchedule> created, Set<String> placedKeys) {
+
+        // 2. Existing fillers on those slots count toward this grid's balance.
+        int lms = 0;
+        int assignment = 0;
+        List<int[]> emptySlots = new ArrayList<>();
+        for (int[] fs : freeSlots) {
+            ScheduleType existing = fillerTypeAt(created, fs[0], fs[1]);
+            if (existing == ScheduleType.LMS) lms++;
+            else if (existing == ScheduleType.ASSIGNMENT) assignment++;
+            else emptySlots.add(fs);
         }
-        return -1;
+
+        // 3. Fill the still-empty slots driving this grid toward the exact
+        //    ceil/floor split (LMS = ceil(N/2)) counting fillers already
+        //    present; every free slot ends up filled.
+        int wantL = (int) Math.ceil(freeSlots.size() / 2.0);
+        int wantA = freeSlots.size() - wantL;
+        for (int[] fs : emptySlots) {
+            ScheduleType type;
+            if (lms < wantL && assignment < wantA) {
+                type = lms <= assignment ? ScheduleType.LMS : ScheduleType.ASSIGNMENT;
+            } else if (lms < wantL) {
+                type = ScheduleType.LMS;
+            } else if (assignment < wantA) {
+                type = ScheduleType.ASSIGNMENT;
+            } else {
+                // inherited prefix already satisfies the split; keep filling
+                // remaining slots alternating so nothing stays unused.
+                type = lms <= assignment ? ScheduleType.LMS : ScheduleType.ASSIGNMENT;
+            }
+            String key = type + "#" + semesterId + "#" + sectionId + "#" + fs[0] + "#" + fs[1];
+            if (!placedKeys.add(key)) continue;
+            if (type == ScheduleType.LMS) lms++;
+            else assignment++;
+            for (TimeSlot slot : slots) {
+                if (slot.getDisplayOrder() != fs[1]) continue;
+                ClassSchedule schedule = new ClassSchedule();
+                schedule.setGeneration(generation);
+                schedule.setDayOfWeek(fs[0]);
+                schedule.setStartSlot(slot);
+                schedule.setEndSlot(slot);
+                schedule.setScheduleType(type);
+                schedule.setScheduleStatus(ScheduleStatus.PENDING);
+                created.add(schedule);
+                break;
+            }
+        }
+    }
+
+    /** Semester match for occupancy checks (specials carry no semester of their own). */
+    private static boolean sameSemesterOfId(ClassSchedule s, UUID semesterId) {
+        Semester sem = semesterOf(s);
+        return sem != null && sem.getSemesterId().equals(semesterId);
+    }
+
+    /** Type of the special row occupying (day, period), if any. */
+    private static ScheduleType fillerTypeAt(List<ClassSchedule> created, int day, int period) {
+        for (ClassSchedule s : created) {
+            if (s.getScheduleType() == ScheduleType.COURSE || s.getDayOfWeek() == null) continue;
+            if (s.getDayOfWeek() == day
+                    && s.getStartSlot().getDisplayOrder() <= period
+                    && s.getEndSlot().getDisplayOrder() >= period) {
+                return s.getScheduleType();
+            }
+        }
+        return null;
     }
 
     // ========== DATA VALIDATION ==========
@@ -1736,32 +1914,42 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                     .toList();
             for (int i = 0; i < daySchedules.size(); i++) {
                 ClassSchedule a = daySchedules.get(i);
-                if (a.getScheduleType() != ScheduleType.COURSE) continue;
                 for (int j = i + 1; j < daySchedules.size(); j++) {
                     ClassSchedule b = daySchedules.get(j);
-                    if (b.getScheduleType() == ScheduleType.COURSE
-                            && a.getTeachingGroup() != null && b.getTeachingGroup() != null
-                            && a.getTeachingGroup().getGroupId().equals(b.getTeachingGroup().getGroupId())) {
-                        conflicts.add(describeConflictSlot(a) + " â€” " + ClassScheduleService.courseCodeOf(a)
-                                + " is scheduled more than once on " + DAY_NAMES[day] + " for the same section");
-                        continue;
-                    }
-                    if (b.getScheduleType() == ScheduleType.COURSE
-                            && ClassScheduleService.courseCodeOf(a) != null
-                            && ClassScheduleService.courseCodeOf(a).equals(ClassScheduleService.courseCodeOf(b))
-                            && !Collections.disjoint(ClassScheduleService.coveredSections(a),
-                                    ClassScheduleService.coveredSections(b))) {
-                        conflicts.add(describeConflictSlot(a) + " â€” " + ClassScheduleService.courseCodeOf(a)
-                                + " is scheduled more than once on " + DAY_NAMES[day] + " for the same section");
-                        continue;
+                    boolean specialPair = a.getScheduleType() != ScheduleType.COURSE
+                            || b.getScheduleType() != ScheduleType.COURSE;
+                    if (!specialPair) {
+                        if (b.getScheduleType() == ScheduleType.COURSE
+                                && a.getTeachingGroup() != null && b.getTeachingGroup() != null
+                                && a.getTeachingGroup().getGroupId().equals(b.getTeachingGroup().getGroupId())) {
+                            conflicts.add(describeConflictSlot(a) + " â€” " + ClassScheduleService.courseCodeOf(a)
+                                    + " is scheduled more than once on " + DAY_NAMES[day] + " for the same section");
+                            continue;
+                        }
+                        if (b.getScheduleType() == ScheduleType.COURSE
+                                && ClassScheduleService.courseCodeOf(a) != null
+                                && ClassScheduleService.courseCodeOf(a).equals(ClassScheduleService.courseCodeOf(b))
+                                && !Collections.disjoint(ClassScheduleService.coveredSections(a),
+                                        ClassScheduleService.coveredSections(b))) {
+                            conflicts.add(describeConflictSlot(a) + " â€” " + ClassScheduleService.courseCodeOf(a)
+                                    + " is scheduled more than once on " + DAY_NAMES[day] + " for the same section");
+                            continue;
+                        }
                     }
                     if (!overlapsSlots(a, b)) continue;
                     boolean conflict;
                     String reason;
-                    if (b.getScheduleType() != ScheduleType.COURSE) {
-                        // A special period (LMS/ASSIGNMENT) never shares with a course.
-                        conflict = true;
-                        reason = "a special period (LMS/ASSIGNMENT) cannot share this slot with a course";
+                    if (specialPair) {
+                        // Specials are optional per-section fillers: they clash only when
+                        // the shared slot belongs to a section the special itself covers.
+                        // Two different sections' fillers may legitimately share a period.
+                        boolean sectionShared = !Collections.disjoint(
+                                ClassScheduleService.coveredSections(a),
+                                ClassScheduleService.coveredSections(b));
+                        conflict = sectionShared;
+                        reason = sectionShared
+                                ? "a special period (LMS/ASSIGNMENT) cannot share this slot with a course"
+                                : null;
                     } else if (!Collections.disjoint(ClassScheduleService.coveredStaff(a),
                             ClassScheduleService.coveredStaff(b))) {
                         // The lecturer conflict rule always wins â€” even within an elective group.
@@ -1990,9 +2178,292 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
             validateUnitPeriods(failures, course, label, byGroup.get(group.getGroupId()), cmrsByCourse);
         }
 
+        validateCurriculumCoverage(failures, generation, useScope, scopeMap, allSchedules);
+
         if (!failures.isEmpty()) {
             throw new BusinessRuleException(
                     "Timetable cannot be published:\n" + String.join("\n", failures));
+        }
+    }
+
+    /**
+     * Curriculum completeness: every required course whose eligibility covers a
+     * selected section's cohort must have a scheduled delivery reaching that
+     * section (directly or through a combined group). This is independent of
+     * how the delivery is represented - it validates the curriculum contract,
+     * not merely the assignment rows.
+     */
+    private void validateCurriculumCoverage(List<String> failures,
+                                            GenerationSession generation,
+                                            boolean useScope,
+                                            Map<UUID, Set<UUID>> scopeMap,
+                                            List<ClassSchedule> schedules) {
+        if (!useScope || scopeMap.isEmpty()) {
+            return;
+        }
+        Map<UUID, Set<UUID>> coveredByCourse = new HashMap<>();
+        for (ClassSchedule schedule : schedules) {
+            if (schedule.getScheduleType() != ScheduleType.COURSE) continue;
+            Course course = courseOf(schedule);
+            if (course == null || course.getSemester() == null) continue;
+            Set<UUID> scopeSections = scopeMap.get(course.getSemester().getSemesterId());
+            if (scopeSections == null) continue;
+            for (UUID sectionId : ClassScheduleService.coveredSections(schedule)) {
+                if (scopeSections.contains(sectionId)) {
+                    coveredByCourse.computeIfAbsent(course.getCourseId(), k -> new HashSet<>())
+                            .add(sectionId);
+                }
+            }
+        }
+        for (Map.Entry<UUID, Set<UUID>> scopeEntry : scopeMap.entrySet()) {
+            UUID semesterId = scopeEntry.getKey();
+            Set<UUID> sectionIds = scopeEntry.getValue();
+            if (sectionIds == null) {
+                // Whole-semester generation: coverage expectations follow the
+                // existing deliveries only.
+                continue;
+            }
+            List<Course> semesterCourses = courseRepository.findBySemester_SemesterId(semesterId);
+            for (UUID sectionId : sectionIds) {
+                Section section = sectionRepository.findById(sectionId).orElse(null);
+                if (section == null) continue;
+                if (!curriculumEligibilityService.isDedicatedCohortSection(section)) {
+                    // Mixed-major sections are HOD-managed; the curriculum
+                    // contract is enforced on dedicated-cohort sections.
+                    continue;
+                }
+                for (Course course : semesterCourses) {
+                    if (!course.isRequired()) continue;
+                    String ownerCode = curriculumEligibilityService.ownerMajorCode(course);
+                    if (!curriculumEligibilityService.isEligibleForSection(course, section, semesterId)) {
+                        continue;
+                    }
+                    if (!coveredByCourse.getOrDefault(course.getCourseId(), Set.of()).contains(sectionId)) {
+                        failures.add("Curriculum gap: Semester "
+                                + (course.getSemester() != null ? course.getSemester().getSemesterNo() : "?")
+                                + " / Section " + section.getSectionName()
+                                + " / " + course.getCourseCode()
+                                + " (" + ownerCode + ") is required curriculum but has no scheduled delivery");
+                    }
+                }
+            }
+        }
+    }
+
+    private Course courseOf(ClassSchedule schedule) {
+        if (schedule.getTeachingAssignment() != null) {
+            return schedule.getTeachingAssignment().getCourse();
+        }
+        if (schedule.getTeachingGroup() != null) {
+            return schedule.getTeachingGroup().getCourse();
+        }
+        return null;
+    }
+
+    /**
+     * Curriculum-to-delivery binding. For every explicitly selected section,
+     * each required course whose curriculum eligibility covers the section's
+     * cohort must have a delivery representation reaching that section (direct
+     * assignment or combined group). Missing deliveries are closed by creating
+     * a section-specific {@link TeachingAssignment} - the same entity the HOD
+     * creates manually - so the course flows into buildSchedulingUnits() and
+     * produces ClassSchedule rows like any other unit.
+     *
+     * <p>Electives (is_required=false) are never auto-bound: elective choice
+     * remains a deliberate HOD decision. Cancelled assignments are never
+     * resurrected: an explicit cancellation is a data decision, not a gap.
+     */
+    private List<TeachingAssignment> ensureCurriculumDeliveries(AcademicTerm term,
+                                                                Map<UUID, Set<UUID>> scope,
+                                                                List<TeachingAssignment> assignments,
+                                                                Map<UUID, List<TeachingAssignmentGroupMember>> membersByGroup) {
+        if (scope.isEmpty()) {
+            return List.of();
+        }
+        // Section names double as dedicated-cohort identifiers (e.g. a section
+        // literally named "CT"): used below to keep an owner-major's
+        // specialised deliveries inside its own dedicated section instead of
+        // cascading them into every mixed cohort as well.
+        Set<String> dedicatedSectionNames = new HashSet<>();
+        for (Section s : sectionRepository.findAll()) {
+            if (s.getSectionName() != null) {
+                dedicatedSectionNames.add(s.getSectionName().trim().toUpperCase());
+            }
+        }
+        Map<UUID, Set<UUID>> coveredByCourse = new HashMap<>();
+        for (TeachingAssignment a : assignments) {
+            coveredByCourse.computeIfAbsent(a.getCourse().getCourseId(), k -> new HashSet<>())
+                    .add(a.getSection().getSectionId());
+        }
+        for (List<TeachingAssignmentGroupMember> members : membersByGroup.values()) {
+            Course course = members.get(0).getGroup().getCourse();
+            Set<UUID> sections = coveredByCourse.computeIfAbsent(course.getCourseId(), k -> new HashSet<>());
+            for (TeachingAssignmentGroupMember m : members) {
+                sections.add(m.getAssignment().getSection().getSectionId());
+            }
+        }
+        List<TeachingAssignment> created = new ArrayList<>();
+        for (Map.Entry<UUID, Set<UUID>> scopeEntry : scope.entrySet()) {
+            UUID semesterId = scopeEntry.getKey();
+            Set<UUID> sectionIds = scopeEntry.getValue();
+            if (sectionIds == null) {
+                // Whole-semester generation: no explicit section selection, so
+                // delivery binding stays a manual decision.
+                continue;
+            }
+            for (UUID sectionId : sectionIds) {
+                Section section = sectionRepository.findById(sectionId).orElse(null);
+                if (section == null) continue;
+                boolean dedicated = curriculumEligibilityService.isDedicatedCohortSection(section);
+                for (Course course : courseRepository.findBySemester_SemesterId(semesterId)) {
+                    if (!course.isRequired()) continue;
+                    // Curriculum membership is decided by courses.semester_id +
+                    // cohort/major eligibility - NEVER by existing
+                    // TeachingAssignment rows. A missing delivery is created
+                    // below through the normal assignment mechanism.
+                    if (!curriculumEligibilityService.isEligibleForSection(course, section, semesterId)) {
+                        continue;
+                    }
+                    String ownerMajor;
+                    try {
+                        ownerMajor = curriculumEligibilityService.ownerMajorCode(course);
+                    } catch (BusinessRuleException e) {
+                        continue; // ownership data broken; surfaced elsewhere
+                    }
+                    // A major that owns a DEDICATED delivery section (name ==
+                    // major code, e.g. "CT") receives its specialised required
+                    // courses there; mixed sections must not duplicate that
+                    // delivery (CT-2236 stays on the CT section instead of
+                    // cascading into A/B/C where CT students are also enrolled).
+                    // Shared-owner curriculum (CST/general - the CST-2235 class)
+                    // self-heals into EVERY eligible section regardless of
+                    // pre-existing TeachingAssignment rows.
+                    if (!dedicated && dedicatedSectionNames.contains(ownerMajor.toUpperCase())) {
+                        continue;
+                    }
+                    if (coveredByCourse.getOrDefault(course.getCourseId(), Set.of()).contains(sectionId)) {
+                        continue;
+                    }
+                    if (assignmentRepository.existsByTerm_TermIdAndCourse_CourseIdAndSection_SectionId(
+                            term.getTermId(), course.getCourseId(), sectionId)) {
+                        // A row exists but is cancelled (or filtered): that is an
+                        // explicit data decision, not a gap to auto-fill.
+                        continue;
+                    }
+                    Staff lecturer = resolveLecturer(term, course);
+                    if (lecturer == null) {
+                        log.warn("Curriculum binding: no eligible lecturer in unit of {} - "
+                                        + "section {} stays uncovered",
+                                course.getCourseCode(), section.getSectionName());
+                        continue;
+                    }
+                    TeachingAssignment binding = new TeachingAssignment();
+                    binding.setCourse(course);
+                    binding.setStaff(lecturer);
+                    binding.setSection(section);
+                    binding.setTerm(term);
+                    binding.setAssignmentStatus(AssignmentStatus.ACTIVE);
+                    binding.setAssignedAt(Instant.now());
+                    created.add(assignmentRepository.save(binding));
+                    coveredByCourse.computeIfAbsent(course.getCourseId(), k -> new HashSet<>())
+                            .add(sectionId);
+                    log.info("Curriculum binding: {} -> section {} (lecturer {})",
+                            course.getCourseCode(), section.getSectionName(), lecturer.getStaffName());
+                }
+            }
+        }
+        return created;
+    }
+
+    /**
+     * Lecturer resolution for auto-bound deliveries. Prefers a lecturer who
+     * already teaches this course this term (proven capability, guaranteed
+     * course.unit == lecturer.unit); otherwise the least-loaded ACTIVE
+     * lecturer of the course's owning unit. Availability itself is enforced
+     * later by the solver's conflict grid.
+     */
+    private Staff resolveLecturer(AcademicTerm term, Course course) {
+        UUID unitId = course.getUnit() != null ? course.getUnit().getUnitId() : null;
+        if (unitId == null) {
+            return null;
+        }
+        List<TeachingAssignment> termAssignments = assignmentRepository
+                .findWithDetailsByTermId(term.getTermId()).stream()
+                .filter(a -> a.getAssignmentStatus() != AssignmentStatus.CANCELLED)
+                .toList();
+        Optional<Staff> currentLecturer = termAssignments.stream()
+                .filter(a -> a.getCourse().getCourseId().equals(course.getCourseId()))
+                .map(TeachingAssignment::getStaff)
+                .filter(s -> s.getUnit() != null && s.getUnit().getUnitId().equals(unitId))
+                .min(Comparator.comparing(Staff::getStaffNo,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
+        if (currentLecturer.isPresent()) {
+            return currentLecturer.get();
+        }
+        Map<UUID, Long> loadByStaff = new HashMap<>();
+        for (TeachingAssignment a : termAssignments) {
+            loadByStaff.merge(a.getStaff().getStaffId(), 1L, Long::sum);
+        }
+        return staffRepository.findAll().stream()
+                .filter(s -> s.getUnit() != null && s.getUnit().getUnitId().equals(unitId))
+                .min(Comparator
+                        .comparingLong((Staff s) -> loadByStaff.getOrDefault(s.getStaffId(), 0L))
+                        .thenComparing(Staff::getStaffNo,
+                                Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElse(null);
+    }
+
+    /**
+     * Generation-time visibility: logs required curriculum deliveries that no
+     * assignment or group binds to a selected section. These courses cannot be
+     * scheduled; publish completeness will reject the timetable until the data
+     * gap is closed.
+     */
+    private void warnUnboundCurriculumDeliveries(GenerationSession generation,
+                                                 Map<UUID, Set<UUID>> scope,
+                                                 List<TeachingAssignment> assignments,
+                                                 Map<UUID, List<TeachingAssignmentGroupMember>> membersByGroup) {
+        if (scope.isEmpty()) {
+            return;
+        }
+        Map<UUID, Set<UUID>> boundByCourse = new HashMap<>();
+        for (TeachingAssignment a : assignments) {
+            boundByCourse.computeIfAbsent(a.getCourse().getCourseId(), k -> new HashSet<>())
+                    .add(a.getSection().getSectionId());
+        }
+        for (List<TeachingAssignmentGroupMember> members : membersByGroup.values()) {
+            Course course = members.get(0).getGroup().getCourse();
+            Set<UUID> sections = boundByCourse.computeIfAbsent(course.getCourseId(), k -> new HashSet<>());
+            for (TeachingAssignmentGroupMember m : members) {
+                sections.add(m.getAssignment().getSection().getSectionId());
+            }
+        }
+        List<String> gaps = new ArrayList<>();
+        for (Map.Entry<UUID, Set<UUID>> scopeEntry : scope.entrySet()) {
+            for (UUID sectionId : scopeEntry.getValue()) {
+                Section section = sectionRepository.findById(sectionId).orElse(null);
+                if (section == null) continue;
+                // Mixed sections are included here too: shared-owner gaps are
+                // auto-bound during generation, so any warning that survives to
+                // this point is a genuine major-specific delivery the HOD still
+                // has to assign manually.
+                for (Course course : courseRepository.findBySemester_SemesterId(scopeEntry.getKey())) {
+                    if (!course.isRequired()) continue;
+                    if (!curriculumEligibilityService.isEligibleForSection(course, section, scopeEntry.getKey())) {
+                        continue;
+                    }
+                    if (!boundByCourse.getOrDefault(course.getCourseId(), Set.of()).contains(sectionId)) {
+                        gaps.add(section.getSectionName() + "/" + course.getCourseCode());
+                    }
+                }
+            }
+        }
+        if (!gaps.isEmpty()) {
+            log.warn("Generation {}: {} required curriculum deliveries have no assignment/group "
+                            + "and will not be scheduled: {}{}",
+                    generation.getGenerationId(), gaps.size(),
+                    String.join(", ", gaps.subList(0, Math.min(20, gaps.size()))),
+                    gaps.size() > 20 ? " ..." : "");
         }
     }
 
@@ -2064,16 +2535,19 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
 
     // ========== SCOPE PERSISTENCE ==========
 
-    public record PersistedScope(UUID examTypeId, List<PersistedSemester> semesters) {}
+    public record PersistedScope(UUID examTypeId, List<PersistedSemester> semesters,
+                                 Boolean autoBindCurriculum) {}
     public record PersistedSemester(UUID semesterId, List<UUID> sectionIds) {}
 
-    private String toScopeJson(UUID examTypeId, Map<UUID, Set<UUID>> scope) {
+    private String toScopeJson(UUID examTypeId, Map<UUID, Set<UUID>> scope,
+                               boolean autoBindCurriculum) {
         List<PersistedSemester> semesters = scope.entrySet().stream()
                 .map(e -> new PersistedSemester(e.getKey(),
                         e.getValue() == null ? null : new ArrayList<>(e.getValue())))
                 .toList();
         try {
-            return objectMapper.writeValueAsString(new PersistedScope(examTypeId, semesters));
+            return objectMapper.writeValueAsString(
+                    new PersistedScope(examTypeId, semesters, autoBindCurriculum));
         } catch (JsonProcessingException e) {
             throw new BusinessRuleException("Could not persist generation scope: " + e.getMessage());
         }
@@ -2086,6 +2560,11 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
         } catch (JsonProcessingException e) {
             return null;
         }
+    }
+
+    private boolean shouldAutoBindCurriculum(PersistedScope persisted) {
+        return persisted == null || persisted.autoBindCurriculum() == null
+                || persisted.autoBindCurriculum();
     }
 
     private Map<UUID, Set<UUID>> toScopeMap(PersistedScope persisted) {
@@ -2159,6 +2638,9 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                 session.getStartedAt(),
                 session.getPublishedAt(),
                 session.getFinishedAt(),
-                session.getCreatedAt());
+                session.getCreatedAt(),
+                session.getFailureReport());
     }
 }
+
+

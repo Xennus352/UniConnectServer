@@ -1,8 +1,16 @@
 package com.unicconnect.exception;
 
+import com.unicconnect.exception.ErrorResponse;
+import com.unicconnect.exception.ResourceNotFoundException;
+import com.unicconnect.exception.DuplicateResourceException;
+import com.unicconnect.exception.BusinessRuleException;
+import com.unicconnect.exception.TimetableConflictException;
+import com.unicconnect.exception.ValidationException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -83,6 +91,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({DisabledException.class, LockedException.class})
     public ResponseEntity<ErrorResponse> handleAccountState(RuntimeException ex, HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "ACCOUNT_STATE", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler({QueryTimeoutException.class, DataAccessException.class})
+    public ResponseEntity<ErrorResponse> handleDataAccess(DataAccessException ex, HttpServletRequest req) {
+        // The Neon pooler can suspend its compute after a few idle minutes; the
+        // first request during a cold start may wait on the connection pool
+        // until the compute wakes. Surface that as a retryable 503 instead of
+        // the generic 500 ("An unexpected error occurred") so users retry.
+        log.warn("Data access failure on {}: {}", req.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.SERVICE_UNAVAILABLE, "DATABASE_UNAVAILABLE",
+                "The university database is temporarily unavailable (warming up). Please try again in a moment.", req);
     }
 
     @ExceptionHandler(AccessDeniedException.class)

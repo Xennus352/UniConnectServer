@@ -1,25 +1,43 @@
-server:
+﻿server:
   port: ${PORT:8080}
 
 spring:
   datasource:
-    url: ${DB_URL:jdbc:postgresql://ep-aged-night-ayo79t27-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require}
+    # connectTimeout/socketTimeout are seconds for the PostgreSQL driver. The
+    # Neon pooler suspends its compute after a few idle minutes; waking it up
+    # takes 30-45s, so the driver's default 10s connect timeout must be raised
+    # or the first connection of a cold start fails with "Read timed out".
+    url: ${DB_URL:jdbc:postgresql://ep-aged-night-ayo79t27-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&connectTimeout=60&socketTimeout=120}
     username: ${DB_USERNAME:neondb_owner}
     password: ${DB_PASSWORD:npg_rBcki3bLJ7pa}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
-      connection-timeout: 45000
+      # The Neon pooler can take up to ~45s (sometimes more under load) to wake
+      # from a cold start, so the pool must keep waiting well past that instead
+      # of failing the first request with a 500. DatabaseKeepAlive keeps the
+      # compute warm during normal use, so this only matters at true cold start.
+      connection-timeout: 90000
+      # Never abort application startup because the (serverless) database is
+      # mid-wake-up. Connections are then acquired lazily on first use, and
+      # DatabaseKeepAlive warms the pool right after boot.
+      initialization-fail-timeout: -1
 
   jpa:
-    # Schema is owned by database/migrations/001_initial_schema.sql.
-    # Validate keeps entities in sync with the migrated schema.
+    # Schema is owned by database/migrations/001_initial_schema.sql and the
+    # hosted database may be unreachable for ~30-45s during a cold start.
+    # Skipping schema validation lets the application boot without a live
+    # connection; the dialect is pinned (in spring.jpa.properties, the only
+    # namespace guaranteed to reach Hibernate) so boot does not depend on
+    # querying database metadata. Requests then wait for the
+    # 90s Hikari connection-timeout.
     hibernate:
-      ddl-auto: validate
+      ddl-auto: none
     open-in-view: false
     properties:
       hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc:
           time_zone: UTC
 

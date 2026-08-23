@@ -7,6 +7,7 @@ import com.unicconnect.dto.response.ResultDocumentResponse;
 import com.unicconnect.dto.response.ScheduleResponse;
 import com.unicconnect.dto.response.StudentResponse;
 import com.unicconnect.entity.Course;
+import com.unicconnect.entity.ClassSchedule;
 import com.unicconnect.entity.GenerationStatus;
 import com.unicconnect.entity.RegistrationStatus;
 import com.unicconnect.entity.Student;
@@ -41,6 +42,8 @@ public class StudentService {
     private final ClassScheduleRepository classScheduleRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final CurriculumEligibilityService curriculumEligibilityService;
+    private final AttendanceService attendanceService;
 
     public StudentService(StudentRepository studentRepository,
                           UserRepository userRepository,
@@ -53,7 +56,9 @@ public class StudentService {
                           SecurityUtil securityUtil,
                           ClassScheduleRepository classScheduleRepository,
                           RoleRepository roleRepository,
-                          PasswordEncoder passwordEncoder) {
+                          PasswordEncoder passwordEncoder,
+                          CurriculumEligibilityService curriculumEligibilityService,
+            AttendanceService attendanceService) {
         this.studentRepository = studentRepository;
         this.userRepository = userRepository;
         this.majorRepository = majorRepository;
@@ -66,6 +71,8 @@ public class StudentService {
         this.classScheduleRepository = classScheduleRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
+        this.curriculumEligibilityService = curriculumEligibilityService;
+        this.attendanceService = attendanceService;
     }
 
     public List<StudentResponse> getAll(UUID majorId, UUID semesterId, UUID sectionId, UUID termId) {
@@ -103,19 +110,31 @@ public class StudentService {
         // A student sees only the officially PUBLISHED timetable of their own
         // semester and section. Sections are shared rows across semesters, so
         // the semester of the schedule's course narrows the result set.
+        // Curriculum eligibility (same rule as generation/publish) additionally
+        // hides courses whose owning major excludes the student's major.
         UUID studentSemesterId = student.getSemester() != null ? student.getSemester().getSemesterId() : null;
         return classScheduleRepository.findByTermAndSectionWithDetails(effectiveTermId, student.getSection().getSectionId())
                 .stream()
                 .filter(s -> s.getGeneration().getStatus() == GenerationStatus.PUBLISHED)
                 .filter(s -> {
-                    if (studentSemesterId == null) return true;
-                    TeachingAssignment ta = s.getTeachingAssignment();
-                    Course co = ta != null ? ta.getCourse() : null;
-                    return co != null && co.getSemester() != null
-                            && studentSemesterId.equals(co.getSemester().getSemesterId());
+                    Course co = courseOf(s);
+                    if (co == null) return false;
+                    if (!curriculumEligibilityService.isVisibleToStudent(co, student)) return false;
+                    return studentSemesterId == null || co.getSemester() == null
+                            || studentSemesterId.equals(co.getSemester().getSemesterId());
                 })
                 .map(ClassScheduleService::toResponse)
                 .toList();
+    }
+
+    private Course courseOf(ClassSchedule schedule) {
+        if (schedule.getTeachingAssignment() != null) {
+            return schedule.getTeachingAssignment().getCourse();
+        }
+        if (schedule.getTeachingGroup() != null) {
+            return schedule.getTeachingGroup().getCourse();
+        }
+        return null;
     }
 
     @Transactional
@@ -189,7 +208,7 @@ public class StudentService {
     public List<AttendanceResponse> getAttendance(UUID studentId) {
         findStudent(studentId);
         return attendanceRepository.findByStudent_StudentId(studentId).stream()
-                .map(AttendanceService::toResponse).toList();
+                .map(attendanceService::toResponse).toList();
     }
 
     public List<ResultDocumentResponse> getResults(UUID studentId) {
@@ -258,3 +277,4 @@ public class StudentService {
                 student.getAddress(), student.getBatchYear(), student.getCreatedAt());
     }
 }
+

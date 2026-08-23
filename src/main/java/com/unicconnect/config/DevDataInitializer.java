@@ -67,17 +67,41 @@ public class DevDataInitializer implements CommandLineRunner {
     public void run(String... args) {
         log.info("=== Dev profile active: seeding development data ===");
 
-        seedOrganizationalUnits();
-        seedSemesters();
-        seedSections();
-        seedMajors();
-        seedAcademicTerm();
-        seedPositions();
-        seedSystemAdmin();
-        seedStaff();
-        seedStudents();
-
-        log.info("=== Dev data seeding complete ===");
+        // The serverless database may still be waking up when this runner fires:
+        // the Neon pooler can reset the first connection mid-query during a cold
+        // start, which would otherwise abort application startup. Seeding is
+        // idempotent, so retry through the wake-up window for transient
+        // connection failures only; anything else is a real problem and still
+        // aborts startup.
+        Exception lastFailure = null;
+        for (int attempt = 1; attempt <= 15; attempt++) {
+            try {
+                seedOrganizationalUnits();
+                seedSemesters();
+                seedSections();
+                seedMajors();
+                seedAcademicTerm();
+                seedPositions();
+                seedSystemAdmin();
+                seedStaff();
+                seedStudents();
+                log.info("=== Dev data seeding complete (attempt {}) ===", attempt);
+                return;
+            } catch (org.springframework.dao.DataAccessResourceFailureException
+                     | org.springframework.dao.QueryTimeoutException e) {
+                lastFailure = e;
+                log.warn("Dev data seeding failed on attempt {} (database warming up?): {}",
+                        attempt, e.getMessage());
+                try {
+                    Thread.sleep(10_000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while waiting to retry dev seeding", ie);
+                }
+            }
+        }
+        log.error("Dev data seeding failed after 15 attempts; continuing without seed data. "
+                + "The application stays usable while the database is already populated.", lastFailure);
     }
 
     // ── Organizational Units ───────────────────────────────────

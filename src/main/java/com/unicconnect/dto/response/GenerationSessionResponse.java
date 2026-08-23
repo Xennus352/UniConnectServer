@@ -15,5 +15,6 @@ public record GenerationSessionResponse(
         Instant startedAt,
         Instant publishedAt,
         Instant finishedAt,
-        Instant createdAt
+        Instant createdAt,
+        String failureReport
 ) {}

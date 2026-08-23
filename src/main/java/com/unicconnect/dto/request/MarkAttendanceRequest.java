@@ -13,6 +13,9 @@ public record MarkAttendanceRequest(
     public record AttendanceEntry(
             @NotNull UUID studentId,
             @NotNull AttendanceStatus attendanceStatus,
-            String remark
+            String remark,
+            /** Timetable slots the student actually attended (subset of the
+             *  schedule's slot range). Empty/ABSENT => zero credited periods. */
+            List<UUID> periodSlotIds
     ) {}
 }

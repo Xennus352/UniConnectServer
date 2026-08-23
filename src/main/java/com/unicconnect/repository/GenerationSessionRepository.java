@@ -12,4 +12,6 @@ public interface GenerationSessionRepository extends JpaRepository<GenerationSes
     Optional<GenerationSession> findFirstByTerm_TermIdAndStatusOrderByCreatedAtDesc(
             UUID termId, com.unicconnect.entity.GenerationStatus status);
     boolean existsByTerm_TermIdAndStatus(UUID termId, com.unicconnect.entity.GenerationStatus status);
+    Optional<GenerationSession> findFirstByStatusAndPublishedAtIsNotNullOrderByPublishedAtDesc(
+            com.unicconnect.entity.GenerationStatus status);
 }

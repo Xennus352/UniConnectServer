@@ -113,7 +113,12 @@ CROSS JOIN LATERAL (
     WHERE unit_name = 'Faculty of Computer Science' OR unit_code = 'FCS'
     LIMIT 1
 ) u
-LEFT JOIN majors m ON m.major_code = 'CS'
+LEFT JOIN majors m ON m.major_code = CASE
+    WHEN c.course_code LIKE 'CS-%' THEN 'CS'
+    WHEN c.course_code LIKE 'CST-%' THEN 'CST'
+    WHEN c.course_code LIKE 'CT-%' THEN 'CT'
+    ELSE 'CST'
+END
 CROSS JOIN LATERAL (
     SELECT CAST(SUBSTRING(c.course_code FROM '[0-9]+') AS INTEGER) AS n
 ) d
@@ -121,7 +126,7 @@ JOIN semesters sem ON sem.semester_no = (d.n / 1000 - 1) * 2 + (d.n / 100 % 10)
 ON CONFLICT (course_code) DO NOTHING;
 
 -- ------------------------------------------------------------
--- 4b. FCST - Faculty of Computer Systems and Technologies (major: CT)
+-- 4b. FCST - Faculty of Computer Systems and Technologies (major: CT for CT-*, CST for CST-*)
 -- ------------------------------------------------------------
 INSERT INTO courses (unit_id, course_code, course_name, credit_unit, major_id, semester_id, is_required, display_order)
 SELECT
@@ -151,7 +156,12 @@ CROSS JOIN LATERAL (
     WHERE unit_name = 'Faculty of Computer Systems and Technologies' OR unit_code = 'FCST'
     LIMIT 1
 ) u
-LEFT JOIN majors m ON m.major_code = 'CT'
+LEFT JOIN majors m ON m.major_code = CASE
+    WHEN c.course_code LIKE 'CS-%' THEN 'CS'
+    WHEN c.course_code LIKE 'CST-%' THEN 'CST'
+    WHEN c.course_code LIKE 'CT-%' THEN 'CT'
+    ELSE 'CST'
+END
 CROSS JOIN LATERAL (
     SELECT CAST(SUBSTRING(c.course_code FROM '[0-9]+') AS INTEGER) AS n
 ) d
@@ -159,7 +169,7 @@ JOIN semesters sem ON sem.semester_no = (d.n / 1000 - 1) * 2 + (d.n / 100 % 10)
 ON CONFLICT (course_code) DO NOTHING;
 
 -- ------------------------------------------------------------
--- 4c. FIS - Faculty of Information Science (major: CST)
+-- 4c. FIS - Faculty of Information Science (major: CST for CST-*, CS for CS-*)
 -- ------------------------------------------------------------
 INSERT INTO courses (unit_id, course_code, course_name, credit_unit, major_id, semester_id, is_required, display_order)
 SELECT
@@ -183,7 +193,12 @@ CROSS JOIN LATERAL (
     WHERE unit_name = 'Faculty of Information Science' OR unit_code = 'FIS'
     LIMIT 1
 ) u
-LEFT JOIN majors m ON m.major_code = 'CST'
+LEFT JOIN majors m ON m.major_code = CASE
+    WHEN c.course_code LIKE 'CS-%' THEN 'CS'
+    WHEN c.course_code LIKE 'CST-%' THEN 'CST'
+    WHEN c.course_code LIKE 'CT-%' THEN 'CT'
+    ELSE 'CST'
+END
 CROSS JOIN LATERAL (
     SELECT CAST(SUBSTRING(c.course_code FROM '[0-9]+') AS INTEGER) AS n
 ) d
@@ -192,11 +207,11 @@ ON CONFLICT (course_code) DO NOTHING;
 
 -- ------------------------------------------------------------
 -- 4d. ITSM - Department of Information Technologies Support
---     and Maintenance (major: NULL)
+--     and Maintenance (major: CST for CST-*, CS for CS-*)
 -- ------------------------------------------------------------
 INSERT INTO courses (unit_id, course_code, course_name, credit_unit, major_id, semester_id, is_required, display_order)
 SELECT
-    u.unit_id, c.course_code, c.course_name, 3, NULL::uuid, sem.semester_id, TRUE, c.display_order
+    u.unit_id, c.course_code, c.course_name, 3, m.major_id, sem.semester_id, TRUE, c.display_order
 FROM (VALUES
     ('CST-1154', 'Web Development (HTML5+ CSS)', 1),
     ('CS-3117',  'Web Programming (J2EE)',       2),
@@ -212,6 +227,12 @@ CROSS JOIN LATERAL (
     WHERE unit_name = 'Department of Information Technologies Support and Maintenance' OR unit_code = 'ITSM'
     LIMIT 1
 ) u
+LEFT JOIN majors m ON m.major_code = CASE
+    WHEN c.course_code LIKE 'CS-%' THEN 'CS'
+    WHEN c.course_code LIKE 'CST-%' THEN 'CST'
+    WHEN c.course_code LIKE 'CT-%' THEN 'CT'
+    ELSE 'CST'
+END
 CROSS JOIN LATERAL (
     SELECT CAST(SUBSTRING(c.course_code FROM '[0-9]+') AS INTEGER) AS n
 ) d
@@ -219,11 +240,11 @@ JOIN semesters sem ON sem.semester_no = (d.n / 1000 - 1) * 2 + (d.n / 100 % 10)
 ON CONFLICT (course_code) DO NOTHING;
 
 -- ------------------------------------------------------------
--- 4e. FC - Faculty of Computing (major: NULL)
+-- 4e. FC - Faculty of Computing (major: CST for all courses)
 -- ------------------------------------------------------------
 INSERT INTO courses (unit_id, course_code, course_name, credit_unit, major_id, semester_id, is_required, display_order)
 SELECT
-    u.unit_id, c.course_code, c.course_name, 3, NULL::uuid, sem.semester_id, TRUE, c.display_order
+    u.unit_id, c.course_code, c.course_name, 3, m.major_id, sem.semester_id, TRUE, c.display_order
 FROM (VALUES
     ('CST-1141', 'Calculus',                                1),
     ('CST-2141', 'Linear Algebra',                          2),
@@ -238,6 +259,12 @@ CROSS JOIN LATERAL (
     WHERE unit_name = 'Faculty of Computing' OR unit_code = 'FC'
     LIMIT 1
 ) u
+LEFT JOIN majors m ON m.major_code = CASE
+    WHEN c.course_code LIKE 'CS-%' THEN 'CS'
+    WHEN c.course_code LIKE 'CST-%' THEN 'CST'
+    WHEN c.course_code LIKE 'CT-%' THEN 'CT'
+    ELSE 'CST'
+END
 CROSS JOIN LATERAL (
     SELECT CAST(SUBSTRING(c.course_code FROM '[0-9]+') AS INTEGER) AS n
 ) d
@@ -245,11 +272,11 @@ JOIN semesters sem ON sem.semester_no = (d.n / 1000 - 1) * 2 + (d.n / 100 % 10)
 ON CONFLICT (course_code) DO NOTHING;
 
 -- ------------------------------------------------------------
--- 4f. DNL - Department of Natural Language (major: NULL)
+-- 4f. DNL - Department of Natural Language (major: CST for shared/general courses)
 -- ------------------------------------------------------------
 INSERT INTO courses (unit_id, course_code, course_name, credit_unit, major_id, semester_id, is_required, display_order)
 SELECT
-    u.unit_id, c.course_code, c.course_name, 3, NULL::uuid, sem.semester_id, TRUE, c.display_order
+    u.unit_id, c.course_code, c.course_name, 3, m.major_id, sem.semester_id, TRUE, c.display_order
 FROM (VALUES
     ('M-1101', 'Myanmar Language',        1),
     ('E-1101', 'English Proficiency I',   2),
@@ -264,6 +291,12 @@ CROSS JOIN LATERAL (
     WHERE unit_name = 'Department of Natural Language' OR unit_code = 'DNL'
     LIMIT 1
 ) u
+LEFT JOIN majors m ON m.major_code = CASE
+    WHEN c.course_code LIKE 'CS-%' THEN 'CS'
+    WHEN c.course_code LIKE 'CST-%' THEN 'CST'
+    WHEN c.course_code LIKE 'CT-%' THEN 'CT'
+    ELSE 'CST'
+END
 CROSS JOIN LATERAL (
     SELECT CAST(SUBSTRING(c.course_code FROM '[0-9]+') AS INTEGER) AS n
 ) d
@@ -271,11 +304,11 @@ JOIN semesters sem ON sem.semester_no = (d.n / 1000 - 1) * 2 + (d.n / 100 % 10)
 ON CONFLICT (course_code) DO NOTHING;
 
 -- ------------------------------------------------------------
--- 4g. DNS - Department of Natural Science (major: NULL)
+-- 4g. DNS - Department of Natural Science (major: CST for shared/general courses)
 -- ------------------------------------------------------------
 INSERT INTO courses (unit_id, course_code, course_name, credit_unit, major_id, semester_id, is_required, display_order)
 SELECT
-    u.unit_id, c.course_code, c.course_name, 3, NULL::uuid, sem.semester_id, TRUE, c.display_order
+    u.unit_id, c.course_code, c.course_name, 3, m.major_id, sem.semester_id, TRUE, c.display_order
 FROM (VALUES
     ('P-1101', 'College Physics', 1),
     ('P-1201', 'College Physics', 2)
@@ -285,6 +318,12 @@ CROSS JOIN LATERAL (
     WHERE unit_name = 'Department of Natural Science' OR unit_code = 'DNS'
     LIMIT 1
 ) u
+LEFT JOIN majors m ON m.major_code = CASE
+    WHEN c.course_code LIKE 'CS-%' THEN 'CS'
+    WHEN c.course_code LIKE 'CST-%' THEN 'CST'
+    WHEN c.course_code LIKE 'CT-%' THEN 'CT'
+    ELSE 'CST'
+END
 CROSS JOIN LATERAL (
     SELECT CAST(SUBSTRING(c.course_code FROM '[0-9]+') AS INTEGER) AS n
 ) d
