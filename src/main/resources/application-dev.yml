@@ -7,9 +7,11 @@
 
 spring:
   datasource:
-    url: jdbc:postgresql://ep-aged-night-ayo79t27-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require
-    username: neondb_owner
-    password: npg_rBcki3bLJ7pa
+    # Points at the CURRENT (new) Neon project; DB_URL/DB_USERNAME/DB_PASSWORD
+    # environment variables still take precedence for local overrides.
+    url: ${DB_URL:jdbc:postgresql://ep-empty-leaf-azyy2750-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&connectTimeout=60&socketTimeout=120}
+    username: ${DB_USERNAME:neondb_owner}
+    password: ${DB_PASSWORD:npg_PMrCxFm5s2If}
     driver-class-name: org.postgresql.Driver
 
   jpa:

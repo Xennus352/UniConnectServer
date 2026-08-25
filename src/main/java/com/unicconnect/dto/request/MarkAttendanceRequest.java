@@ -10,12 +10,16 @@ public record MarkAttendanceRequest(
         List<AttendanceEntry> entries
 ) {
 
+    /**
+     * PRESENT requires attendanceStartSlotId + attendanceEndSlotId (the actual
+     * contiguous credited range, inside the schedule span). ABSENT requires
+     * both to be null. Attended periods are derived server-side.
+     */
     public record AttendanceEntry(
             @NotNull UUID studentId,
             @NotNull AttendanceStatus attendanceStatus,
             String remark,
-            /** Timetable slots the student actually attended (subset of the
-             *  schedule's slot range). Empty/ABSENT => zero credited periods. */
-            List<UUID> periodSlotIds
+            UUID attendanceStartSlotId,
+            UUID attendanceEndSlotId
     ) {}
 }

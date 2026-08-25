@@ -64,32 +64,16 @@ public class RollCallController {
         return ResponseEntity.ok(rollCallService.currentClass(lecturer));
     }
 
-    /** Create/reuse today's CLASS_SESSION for a published schedule. */
+    /** Create/reuse a CLASS_SESSION for a published schedule (default: today). */
     @PostMapping("/sessions")
     public ResponseEntity<ClassSessionResponse> ensureSession(
             @Valid @RequestBody RollCallSessionRequest request) {
         Staff lecturer = rollCallService.requireLecturer();
-        var session = rollCallService.ensureTodaySession(request.scheduleId(), lecturer);
-        var schedule = session.getSchedule();
-        String courseCode = schedule.getTeachingAssignment() != null
-                ? schedule.getTeachingAssignment().getCourse().getCourseCode()
-                : schedule.getTeachingGroup() != null
-                        ? schedule.getTeachingGroup().getCourse().getCourseCode()
-                        : null;
-        var section = schedule.getTeachingAssignment() != null
-                ? schedule.getTeachingAssignment().getSection()
-                : null;
-        return ResponseEntity.ok(new ClassSessionResponse(
-                session.getSessionId(),
-                schedule.getScheduleId(),
-                schedule.getGeneration().getTerm().getTermId(),
-                courseCode,
-                section != null ? section.getSectionId() : null,
-                section != null ? section.getSectionName() : null,
-                session.getSessionDate(),
-                session.getSessionStatus(),
-                session.getStartedAt(),
-                session.getEndedAt()));
+        // Response is built inside the service transaction: lazy schedule
+        // associations (generation/term, course, section) are resolved while
+        // the persistence context is still open.
+        return ResponseEntity.ok(rollCallService.ensureTodaySessionResponse(
+                request.scheduleId(), lecturer, request.sessionDate()));
     }
 
     /** Roster + saved attendance for a schedule (optionally today's session). */
@@ -100,6 +84,18 @@ public class RollCallController {
         Staff lecturer = rollCallService.requireLecturer();
         return ResponseEntity.ok(
                 rollCallService.students(scheduleId, sessionId, lecturer));
+    }
+
+    /**
+     * Delete a CLASS_SESSION together with every attendance row of that
+     * session. Transactional; the same Roll Call authorization applies
+     * (lecturer position + schedule coverage + latest PUBLISHED timetable).
+     */
+    @DeleteMapping("/sessions/{sessionId}")
+    public ResponseEntity<Void> deleteSession(@PathVariable UUID sessionId) {
+        Staff lecturer = rollCallService.requireLecturer();
+        rollCallService.deleteSession(sessionId, lecturer);
+        return ResponseEntity.noContent().build();
     }
 
     /** Submit attendance; delegates to AttendanceService (transactional). */
@@ -115,6 +111,35 @@ public class RollCallController {
     public ResponseEntity<DailyAttendanceResponse> daily(@PathVariable UUID sessionId) {
         rollCallService.requireLecturer();
         return ResponseEntity.ok(calculationService.daily(sessionId));
+    }
+
+    /**
+     * Roll Call History: previously submitted attendance for ONE lecturer-owned
+     * schedule of the latest PUBLISHED timetable. Columns = actual
+     * CLASS_SESSIONS between fromDate..toDate (inclusive, ISO yyyy-MM-dd;
+     * defaults to the current month). All counts/percentages derived, never
+     * stored.
+     */
+    @GetMapping("/history")
+    public ResponseEntity<com.unicconnect.dto.response.RollCallHistoryResponse> historyByCohort(
+            @RequestParam String courseCode,
+            @RequestParam Integer semesterNo,
+            @RequestParam(required = false) String sectionName,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate fromDate,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate toDate) {
+        return ResponseEntity.ok(rollCallService.historyByCohort(
+                courseCode, semesterNo, sectionName, fromDate, toDate));
+    }
+
+    /** Valid timetable occurrence dates for a schedule within a date range. */
+    @GetMapping("/occurrences")
+    public ResponseEntity<List<java.time.LocalDate>> occurrences(
+            @RequestParam UUID scheduleId,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate fromDate,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate toDate) {
+        Staff lecturer = rollCallService.requireLecturer();
+        return ResponseEntity.ok(
+                rollCallService.occurrences(scheduleId, fromDate, toDate, lecturer));
     }
 
     /** Dynamic monthly per student (+optional course). */

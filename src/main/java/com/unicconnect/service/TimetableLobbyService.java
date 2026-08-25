@@ -11,6 +11,8 @@ import com.unicconnect.repository.*;
 import com.unicconnect.util.SecurityUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -111,11 +113,16 @@ public class TimetableLobbyService {
             memberRepository.save(member);
             // Push an instant join notification so every waiting-room view
             // (leader + other members) updates its progress bar without polling.
-            realtimeEventService.publish(lobby.getLobbyId(),
+            // Deferred until commit so subscribers can never observe the event
+            // before the joined state is actually readable from the database.
+            final UUID joinedLobbyId = lobby.getLobbyId();
+            final String staffId = staff.getStaffId().toString();
+            final String staffName = staff.getStaffName();
+            afterCommit(() -> realtimeEventService.publish(joinedLobbyId,
                     TimetableRealtimeEventService.LOBBY_MEMBER_JOINED,
-                    Map.of("lobbyId", lobby.getLobbyId(),
-                            "staffId", staff.getStaffId().toString(),
-                            "staffName", staff.getStaffName()));
+                    Map.of("lobbyId", joinedLobbyId,
+                            "staffId", staffId,
+                            "staffName", staffName)));
         }
         return toResponse(lobby);
     }
@@ -144,8 +151,10 @@ public class TimetableLobbyService {
         requireLeader(lobby);
         lobby.setStatus(LobbyStatus.CANCELLED);
         TimetableLobby saved = lobbyRepository.save(lobby);
-        realtimeEventService.publish(lobby.getLobbyId(), TimetableRealtimeEventService.LOBBY_CANCELLED,
-                Map.of("lobbyId", lobby.getLobbyId()));
+        final UUID cancelledLobbyId = lobby.getLobbyId();
+        afterCommit(() -> realtimeEventService.publish(cancelledLobbyId,
+                TimetableRealtimeEventService.LOBBY_CANCELLED,
+                Map.of("lobbyId", cancelledLobbyId)));
         return toResponse(saved);
     }
 
@@ -186,12 +195,38 @@ public class TimetableLobbyService {
         lobby.setStatus(LobbyStatus.GENERATING);
         lobby = lobbyRepository.save(lobby);
 
-        realtimeEventService.publishManagementStarted(
-                lobby.getLobbyId(), session.getGenerationId(), lobby.getTerm().getTermId());
+        // The event must reach clients only AFTER the generation session and the
+        // lobby transition are committed. Publishing inside the transaction let a
+        // fast subscriber call GET /generations/{id} before commit and receive a
+        // 404 ("Generation session not found") — the exact reported race.
+        final UUID startedLobbyId = lobby.getLobbyId();
+        final UUID generationId = session.getGenerationId();
+        final UUID termId = lobby.getTerm().getTermId();
+        afterCommit(() -> realtimeEventService.publishManagementStarted(
+                startedLobbyId, generationId, termId));
         return toResponse(lobby);
     }
 
     // ---------- Helpers ----------
+
+    /**
+     * Runs the given realtime fan-out after the current transaction commits.
+     * SSE consumers act on events immediately (navigate, re-fetch by id), so an
+     * event that escapes before commit exposes uncommitted state as a 404.
+     * When no transaction is active the action runs inline.
+     */
+    private void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+        } else {
+            action.run();
+        }
+    }
 
     private TimetableLobby findLobby(UUID lobbyId) {
         return lobbyRepository.findById(lobbyId)

@@ -7,7 +7,6 @@ import com.unicconnect.entity.*;
 import com.unicconnect.exception.BusinessRuleException;
 import com.unicconnect.exception.ResourceNotFoundException;
 import com.unicconnect.exception.ValidationException;
-import com.unicconnect.repository.AttendancePeriodRepository;
 import com.unicconnect.repository.AttendanceRepository;
 import com.unicconnect.repository.ClassSessionRepository;
 import com.unicconnect.repository.StudentRepository;
@@ -19,22 +18,19 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 /**
- * Roll-call attendance decisions + the actual periods a student received
- * credit for. Percentages are NEVER stored here; they are derived by
- * {@link AttendanceCalculationService}.
+ * Roll-call attendance decisions + the student's ACTUAL attended period range
+ * (attendance_start_slot_id .. attendance_end_slot_id). Percentages are NEVER
+ * stored here; they are derived by {@link AttendanceCalculationService}.
  */
 @Service
 @Transactional(readOnly = true)
 public class AttendanceService {
 
     private final AttendanceRepository attendanceRepository;
-    private final AttendancePeriodRepository periodRepository;
     private final ClassSessionRepository sessionRepository;
     private final StudentRepository studentRepository;
     private final StaffRepository staffRepository;
@@ -43,7 +39,6 @@ public class AttendanceService {
     private final RollCallService rollCallService;
 
     public AttendanceService(AttendanceRepository attendanceRepository,
-                             AttendancePeriodRepository periodRepository,
                              ClassSessionRepository sessionRepository,
                              StudentRepository studentRepository,
                              StaffRepository staffRepository,
@@ -51,13 +46,18 @@ public class AttendanceService {
                              SecurityUtil securityUtil,
                              RollCallService rollCallService) {
         this.attendanceRepository = attendanceRepository;
-        this.periodRepository = periodRepository;
         this.sessionRepository = sessionRepository;
         this.studentRepository = studentRepository;
         this.staffRepository = staffRepository;
         this.timeSlotRepository = timeSlotRepository;
         this.securityUtil = securityUtil;
         this.rollCallService = rollCallService;
+    }
+
+    /** Attended periods derived from display order; never persisted. */
+    public static int attendedPeriods(TimeSlot start, TimeSlot end) {
+        if (start == null || end == null) return 0;
+        return end.getDisplayOrder() - start.getDisplayOrder() + 1;
     }
 
     public List<AttendanceResponse> getAll(UUID sessionId) {
@@ -86,20 +86,12 @@ public class AttendanceService {
                 .orElseThrow(() -> new BusinessRuleException("Only staff can perform roll call"));
         rollCallService.authorizeLecturerForSchedule(staff, session.getSchedule());
 
-        LocalDate today = LocalDate.now();
-        if (!session.getSessionDate().equals(today)) {
-            throw new BusinessRuleException(
-                    "Attendance can only be submitted for today's session");
-        }
-
-        // Valid credit slots for this schedule: start..end inclusive.
-        List<TimeSlot> spanSlots = timeSlotRepository.findAll().stream()
-                .filter(t -> t.getDisplayOrder() >= session.getSchedule().getStartSlot().getDisplayOrder()
-                        && t.getDisplayOrder() <= session.getSchedule().getEndSlot().getDisplayOrder())
-                .sorted(java.util.Comparator.comparing(TimeSlot::getDisplayOrder))
-                .toList();
-        Set<UUID> validSlotIds = new HashSet<>();
-        spanSlots.forEach(t -> validSlotIds.add(t.getSlotId()));
+        // Scheduled-date rule: attendance belongs to CLASS_SESSION.session_date
+        // (the timetable occurrence), which may be today, a PREVIOUS scheduled
+        // class being entered late, or an UPCOMING one prepared in advance.
+        // Authorization above already restricts this to lecturer-owned
+        // schedules of the latest PUBLISHED timetable; only COMPLETED
+        // sessions stay locked (checked before this point).
 
         List<AttendanceResponse> saved = new ArrayList<>();
         for (MarkAttendanceRequest.AttendanceEntry entry : request.entries()) {
@@ -107,27 +99,18 @@ public class AttendanceService {
                     .orElseThrow(() -> new ResourceNotFoundException(
                             "Student not found: " + entry.studentId()));
 
-            List<UUID> slotIds = entry.periodSlotIds() == null ? List.of() : entry.periodSlotIds();
+            // AUTHORITATIVE COHORT enforcement: a submission may only target
+            // students whose semester == the schedule course's semester AND
+            // whose section is covered by this schedule. Prevents cross-
+            // semester contamination regardless of what the client sends.
+            validateCohortMembership(session.getSchedule(), student);
 
-            AttendanceStatus status = entry.attendanceStatus();
-            if (status == AttendanceStatus.ABSENT && !slotIds.isEmpty()) {
-                throw new ValidationException(
-                        "ABSENT students cannot have attended periods: " + student.getStudentName());
-            }
-            if (status == AttendanceStatus.PRESENT && slotIds.isEmpty()) {
-                throw new ValidationException(
-                        "Select at least one attended period for "
-                                + student.getStudentName()
-                                + " (or mark the student ABSENT)");
-            }
-            for (UUID slotId : slotIds) {
-                if (!validSlotIds.contains(slotId)) {
-                    throw new ValidationException(
-                            "Selected period is outside the scheduled range for "
-                                    + student.getStudentName());
-                }
-            }
+            TimeSlot[] range = resolveRange(session.getSchedule(),
+                    entry.attendanceStatus(), entry.attendanceStartSlotId(),
+                    entry.attendanceEndSlotId(), student.getStudentName());
 
+            // Upsert: one decision per (session, student), enforced also by
+            // uq_attendance_session_student.
             Attendance attendance = attendanceRepository
                     .findBySession_SessionId(sessionId).stream()
                     .filter(a -> a.getStudent().getStudentId().equals(entry.studentId()))
@@ -138,21 +121,12 @@ public class AttendanceService {
                 attendance.setSession(session);
                 attendance.setStudent(student);
             }
-            attendance.setAttendanceStatus(status);
+            attendance.setAttendanceStatus(entry.attendanceStatus());
             attendance.setRemark(entry.remark());
             attendance.setMarkedByStaff(staff);
+            attendance.setAttendanceStartSlot(range[0]);
+            attendance.setAttendanceEndSlot(range[1]);
             attendance = attendanceRepository.save(attendance);
-
-            // Replace credited periods transactionally.
-            periodRepository.deleteByAttendance_AttendanceId(attendance.getAttendanceId());
-            periodRepository.flush();
-            for (UUID slotId : slotIds) {
-                TimeSlot slot = timeSlotRepository.findById(slotId).orElseThrow();
-                AttendancePeriod ap = new AttendancePeriod();
-                ap.setAttendance(attendance);
-                ap.setSlot(slot);
-                periodRepository.save(ap);
-            }
             saved.add(toResponse(attendance));
         }
         return saved;
@@ -161,11 +135,19 @@ public class AttendanceService {
     @Transactional
     public AttendanceResponse update(UUID attendanceId, UpdateAttendanceRequest request) {
         Attendance attendance = findAttendance(attendanceId);
+        Staff staff = staffRepository.findByUser_UserId(securityUtil.currentUserId())
+                .orElseThrow(() -> new BusinessRuleException("Only staff can perform roll call"));
+        rollCallService.authorizeLecturerForSchedule(staff, attendance.getSession().getSchedule());
         if (attendance.getSession().getSessionStatus() == SessionStatus.COMPLETED) {
             throw new BusinessRuleException("Attendance cannot be modified after the session is completed");
         }
+        TimeSlot[] range = resolveRange(attendance.getSession().getSchedule(),
+                request.attendanceStatus(), request.attendanceStartSlotId(),
+                request.attendanceEndSlotId(), attendance.getStudent().getStudentName());
         attendance.setAttendanceStatus(request.attendanceStatus());
         attendance.setRemark(request.remark());
+        attendance.setAttendanceStartSlot(range[0]);
+        attendance.setAttendanceEndSlot(range[1]);
         return toResponse(attendanceRepository.save(attendance));
     }
 
@@ -178,18 +160,87 @@ public class AttendanceService {
         attendanceRepository.deleteById(attendanceId);
     }
 
+    /**
+     * Cohort rule: student.semester_id == course.semester_id AND
+     * student.section_id ∈ schedule coverage. Anything else is rejected.
+     */
+    private void validateCohortMembership(ClassSchedule schedule, Student student) {
+        var course = RollCallService.courseOfRow(schedule);
+        UUID courseSem = course != null && course.getSemester() != null
+                ? course.getSemester().getSemesterId() : null;
+        var covered = ClassScheduleService.coveredSections(schedule);
+        boolean semOk = courseSem != null && student.getSemester() != null
+                && courseSem.equals(student.getSemester().getSemesterId());
+        boolean secOk = student.getSection() != null
+                && covered.contains(student.getSection().getSectionId());
+        if (!semOk || !secOk) {
+            throw new BusinessRuleException(
+                    "Student " + student.getRollNo() + " (" + student.getStudentName()
+                            + ") is not part of this class cohort"
+                            + (!semOk ? " — semester mismatch" : "")
+                            + (!secOk ? " — section not covered by this schedule" : ""));
+        }
+    }
+
+    /**
+     * Validates the requested actual period range against the schedule span
+     * using real display-order values (never UUID comparison):
+     *   PRESENT => both ids required, inside [schedule.start..schedule.end],
+     *              start.displayOrder <= end.displayOrder.
+     *   ABSENT  => both must be NULL.
+     * Returns {startSlot, endSlot} or {null, null} for ABSENT.
+     */
+    private TimeSlot[] resolveRange(ClassSchedule schedule, AttendanceStatus status,
+                                    UUID startSlotId, UUID endSlotId, String who) {
+        int lo = Math.min(schedule.getStartSlot().getDisplayOrder(),
+                schedule.getEndSlot().getDisplayOrder());
+        int hi = Math.max(schedule.getStartSlot().getDisplayOrder(),
+                schedule.getEndSlot().getDisplayOrder());
+
+        if (status == AttendanceStatus.ABSENT) {
+            if (startSlotId != null || endSlotId != null) {
+                throw new ValidationException(
+                        "ABSENT students cannot have attended periods" + suffix(who));
+            }
+            return new TimeSlot[]{null, null};
+        }
+
+        if (status == AttendanceStatus.PRESENT && (startSlotId == null || endSlotId == null)) {
+            throw new ValidationException(
+                    "Select at least one attended period for " + who
+                            + " (or mark the student ABSENT)");
+        }
+
+        TimeSlot start = timeSlotRepository.findById(startSlotId)
+                .orElseThrow(() -> new ValidationException(
+                        "Unknown attendance start slot for " + who));
+        TimeSlot end = timeSlotRepository.findById(endSlotId)
+                .orElseThrow(() -> new ValidationException(
+                        "Unknown attendance end slot for " + who));
+
+        if (start.getDisplayOrder() > end.getDisplayOrder()) {
+            throw new ValidationException(
+                    "Attendance start period cannot be after the end period for " + who);
+        }
+        if (start.getDisplayOrder() < lo || end.getDisplayOrder() > hi
+                || end.getDisplayOrder() < lo || start.getDisplayOrder() > hi) {
+            throw new ValidationException(
+                    "Selected period is outside the scheduled range for " + who);
+        }
+        return new TimeSlot[]{start, end};
+    }
+
+    private static String suffix(String name) {
+        return name != null && !name.isBlank() ? ": " + name : "";
+    }
+
     public Attendance findAttendance(UUID attendanceId) {
         return attendanceRepository.findById(attendanceId)
                 .orElseThrow(() -> new ResourceNotFoundException("Attendance record not found"));
     }
 
     public AttendanceResponse toResponse(Attendance attendance) {
-        List<AttendancePeriod> periods =
-                periodRepository.findByAttendance_AttendanceId(attendance.getAttendanceId());
-        List<UUID> slotIds = periods.stream()
-                .map(p -> p.getSlot().getSlotId())
-                .sorted(java.util.Comparator.comparing(id -> id))
-                .toList();
+        boolean present = attendance.getAttendanceStatus() == AttendanceStatus.PRESENT;
         return new AttendanceResponse(
                 attendance.getAttendanceId(),
                 attendance.getSession().getSessionId(),
@@ -200,8 +251,12 @@ public class AttendanceService {
                 attendance.getRemark(),
                 attendance.getMarkedAt(),
                 attendance.getMarkedByStaff() != null ? attendance.getMarkedByStaff().getStaffId() : null,
-                slotIds.size(),
-                slotIds);
+                present ? attendedPeriods(
+                        attendance.getAttendanceStartSlot(),
+                        attendance.getAttendanceEndSlot()) : 0,
+                attendance.getAttendanceStartSlot() != null
+                        ? attendance.getAttendanceStartSlot().getSlotId() : null,
+                attendance.getAttendanceEndSlot() != null
+                        ? attendance.getAttendanceEndSlot().getSlotId() : null);
     }
 }
-

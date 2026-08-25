@@ -3,7 +3,6 @@ package com.unicconnect.dto.response;
 import com.unicconnect.entity.AttendanceStatus;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 public record AttendanceResponse(
@@ -16,6 +15,8 @@ public record AttendanceResponse(
         String remark,
         Instant markedAt,
         UUID markedByStaffId,
+        /** Derived dynamically; never stored. ABSENT => 0. */
         int attendedPeriods,
-        List<UUID> attendedSlotIds
+        UUID attendanceStartSlotId,
+        UUID attendanceEndSlotId
 ) {}

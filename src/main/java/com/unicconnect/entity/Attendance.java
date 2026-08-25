@@ -43,4 +43,16 @@ public class Attendance {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "marked_by_staff_id")
     private Staff markedByStaff;
+
+    /**
+     * Actual attended range for THIS student. PRESENT requires both; ABSENT
+     * requires both to be NULL. The scheduled range lives on the schedule.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "attendance_start_slot_id")
+    private TimeSlot attendanceStartSlot;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "attendance_end_slot_id")
+    private TimeSlot attendanceEndSlot;
 }

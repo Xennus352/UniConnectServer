@@ -72,6 +72,58 @@ public class CurriculumEligibilityService {
         return cohort;
     }
 
+    /**
+     * Structural programme resolution for a section within a given semester.
+     *
+     * Determined by section identity, NOT by enrolled-student majors.
+     *
+     * Dedicated sections (name matches a major_code, e.g. "CT"):
+     *   → that major's programme exclusively.
+     *
+     * Shared sections (A/B/C):
+     *   Semesters 1–3 → foundational CST programme (all shared courses).
+     *   Semesters 4+  → upper-level CS programme (CS courses + shared courses).
+     *   These sections never receive CT-only or other dedicated-programme courses.
+     */
+    public String resolveIntendedProgramme(Section section, int semesterNo) {
+        String name = section.getSectionName();
+        if (name != null && !name.isBlank()) {
+            String trimmed = name.trim();
+            for (Major m : majorRepository.findAll()) {
+                if (m.getMajorCode() != null && m.getMajorCode().equalsIgnoreCase(trimmed)) {
+                    return m.getMajorCode();
+                }
+            }
+        }
+        // Non-dedicated sections: academic level determines the programme
+        return semesterNo >= 4 ? "CS" : SHARED_MAJOR_CODE;
+    }
+
+    /**
+     * Structural eligibility: a required course belongs to a section when the
+     * course's owning major is compatible with the section's intended
+     * programme. Shared/general courses (CST/E/M/P) are compatible with all
+     * programmes; major-specific courses (CS/CT) only with their own.
+     *
+     * Student enrollment data MUST NOT influence this decision.
+     */
+    public boolean isStructurallyEligible(Course course, Section section, int semesterNo) {
+        if (course.getSemester() == null
+                || course.getSemester().getSemesterNo() != semesterNo) {
+            return false;
+        }
+        String programme = resolveIntendedProgramme(section, semesterNo);
+        if (programme == null) return false;
+
+        String owner = ownerMajorCode(course);
+
+        // Shared/general courses (CST-owned incl. E/M/P) → all programmes
+        if (SHARED_MAJOR_CODE.equals(owner)) return true;
+
+        // Major-specific courses → only their own programme's sections
+        return owner.equals(programme);
+    }
+
     public boolean isEligibleFor(Course course, String studentMajorCode, UUID semesterId) {
         if (studentMajorCode == null || semesterId == null) {
             return false;
@@ -83,13 +135,18 @@ public class CurriculumEligibilityService {
         return eligibleMajorCodes(course).contains(studentMajorCode);
     }
 
+    /**
+     * Structural eligibility: uses semester-based programme resolution.
+     * Section identity comes from the university's academic structure,
+     * NOT from enrolled-student major distribution.
+     */
     public boolean isEligibleForSection(Course course, Section section, UUID semesterId) {
         if (course.getSemester() == null
                 || !semesterId.equals(course.getSemester().getSemesterId())) {
             return false;
         }
-        Set<String> eligible = eligibleMajorCodes(course);
-        return cohortMajorCodes(section).stream().anyMatch(eligible::contains);
+        int semNo = course.getSemester().getSemesterNo();
+        return isStructurallyEligible(course, section, semNo);
     }
 
     /**

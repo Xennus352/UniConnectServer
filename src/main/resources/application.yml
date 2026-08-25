@@ -7,9 +7,9 @@ spring:
     # Neon pooler suspends its compute after a few idle minutes; waking it up
     # takes 30-45s, so the driver's default 10s connect timeout must be raised
     # or the first connection of a cold start fails with "Read timed out".
-    url: ${DB_URL:jdbc:postgresql://ep-aged-night-ayo79t27-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&connectTimeout=60&socketTimeout=120}
+    url: ${DB_URL:jdbc:postgresql://ep-empty-leaf-azyy2750-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&connectTimeout=60&socketTimeout=120}
     username: ${DB_USERNAME:neondb_owner}
-    password: ${DB_PASSWORD:npg_rBcki3bLJ7pa}
+    password: ${DB_PASSWORD:npg_PMrCxFm5s2If}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -39,7 +39,12 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc:
-          time_zone: UTC
+          # NOTE: do NOT force hibernate.jdbc.time_zone here. time_slots uses
+          # TIME WITHOUT TIME ZONE (wall-clock periods); forcing UTC made
+          # Hibernate read them through a UTC Calendar and shift every
+          # LocalTime by the JVM offset (+06:30 -> 09:00 became 15:30).
+          # Wall-clock TIME columns must pass through unconverted.
+          # time_zone: UTC
 
   mvc:
     # Long-lived SSE streams (timetable lobby realtime). 0 = no async timeout;

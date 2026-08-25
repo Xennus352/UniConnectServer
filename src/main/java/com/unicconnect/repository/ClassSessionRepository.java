@@ -11,4 +11,6 @@ public interface ClassSessionRepository extends JpaRepository<ClassSession, UUID
     boolean existsBySchedule_ScheduleIdAndSessionDate(UUID scheduleId, java.time.LocalDate sessionDate);
     java.util.Optional<ClassSession> findBySchedule_ScheduleIdAndSessionDate(UUID scheduleId, java.time.LocalDate sessionDate);
     List<ClassSession> findBySchedule_ScheduleIdInAndSessionDateBetween(java.util.List<java.util.UUID> scheduleIds, java.time.LocalDate start, java.time.LocalDate end);
+    List<ClassSession> findBySchedule_ScheduleIdInAndSessionDateBetweenOrderBySessionDateAsc(java.util.List<java.util.UUID> scheduleIds, java.time.LocalDate start, java.time.LocalDate end);
+    List<ClassSession> findBySchedule_ScheduleIdAndSessionDateBetweenOrderBySessionDateAsc(java.util.UUID scheduleId, java.time.LocalDate start, java.time.LocalDate end);
 }

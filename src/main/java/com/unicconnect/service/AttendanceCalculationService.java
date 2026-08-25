@@ -3,14 +3,12 @@ package com.unicconnect.service;
 import com.unicconnect.dto.response.DailyAttendanceResponse;
 import com.unicconnect.dto.response.MonthlyAttendanceResponse;
 import com.unicconnect.entity.Attendance;
-import com.unicconnect.entity.AttendancePeriod;
+import com.unicconnect.entity.AttendanceStatus;
 import com.unicconnect.entity.ClassSchedule;
 import com.unicconnect.entity.ClassSession;
-import com.unicconnect.entity.Course;
 import com.unicconnect.entity.Student;
 import com.unicconnect.entity.TimeSlot;
 import com.unicconnect.exception.ResourceNotFoundException;
-import com.unicconnect.repository.AttendancePeriodRepository;
 import com.unicconnect.repository.AttendanceRepository;
 import com.unicconnect.repository.ClassScheduleRepository;
 import com.unicconnect.repository.ClassSessionRepository;
@@ -24,20 +22,22 @@ import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 /**
  * Dynamic attendance calculations. Percentages are derived from actual
- * CLASS_SESSIONS x schedule slot spans x ATTENDANCE_PERIODS and are never
+ * CLASS_SESSIONS x schedule slot spans x the ATTENDANCE actual range
+ * (attendance_start_slot_id .. attendance_end_slot_id) and are never
  * persisted.
  *
  * scheduledPeriods for a session = (end_slot displayOrder - start_slot
- * displayOrder) + 1, i.e. the number of timetable periods the class spans.
+ * displayOrder) + 1.
+ *
+ * attendedPeriods = 0 for ABSENT, otherwise end - start + 1 on the stored
+ * range. Days without a CLASS_SESSION contribute nothing to any denominator.
  */
 @Service
 @Transactional(readOnly = true)
@@ -46,20 +46,17 @@ public class AttendanceCalculationService {
     private final ClassSessionRepository sessionRepository;
     private final ClassScheduleRepository scheduleRepository;
     private final AttendanceRepository attendanceRepository;
-    private final AttendancePeriodRepository periodRepository;
     private final StudentRepository studentRepository;
     private final TimeSlotRepository timeSlotRepository;
 
     public AttendanceCalculationService(ClassSessionRepository sessionRepository,
                                         ClassScheduleRepository scheduleRepository,
                                         AttendanceRepository attendanceRepository,
-                                        AttendancePeriodRepository periodRepository,
                                         StudentRepository studentRepository,
                                         TimeSlotRepository timeSlotRepository) {
         this.sessionRepository = sessionRepository;
         this.scheduleRepository = scheduleRepository;
         this.attendanceRepository = attendanceRepository;
-        this.periodRepository = periodRepository;
         this.studentRepository = studentRepository;
         this.timeSlotRepository = timeSlotRepository;
     }
@@ -90,34 +87,37 @@ public class AttendanceCalculationService {
             }
         }
 
-        Map<UUID, Set<UUID>> attendedByStudent = new HashMap<>();
+        Map<UUID, Integer> attendedByStudent = new HashMap<>();
         for (Attendance a : attendanceRepository.findBySession_SessionId(sessionId)) {
-            Set<UUID> set = attendedByStudent.computeIfAbsent(
-                    a.getStudent().getStudentId(), k -> new HashSet<>());
-            for (AttendancePeriod p : periodRepository
-                    .findByAttendance_AttendanceId(a.getAttendanceId())) {
-                set.add(p.getSlot().getSlotId());
-            }
+            int att = a.getAttendanceStatus() == AttendanceStatus.PRESENT
+                    ? AttendanceService.attendedPeriods(
+                            a.getAttendanceStartSlot(), a.getAttendanceEndSlot())
+                    : 0;
+            attendedByStudent.merge(a.getStudent().getStudentId(), att, Integer::sum);
         }
 
-        // every student of the covered sections appears, even without an Attendance row
+        // AUTHORITATIVE COHORT: course.semester + covered sections — same rule
+        // as the roster endpoint, so reports can never mix semester cohorts.
+        var course = RollCallService.courseOfRow(schedule);
+        if (course == null || course.getSemester() == null) {
+            throw new ResourceNotFoundException("Schedule course/semester could not be resolved");
+        }
         Map<UUID, Student> roster = new LinkedHashMap<>();
-        for (UUID sec : ClassScheduleService.coveredSections(schedule)) {
-            for (Student st : studentRepository.findBySection_SectionId(sec)) {
-                roster.putIfAbsent(st.getStudentId(), st);
-            }
+        for (Student st : studentRepository.findBySection_SectionIdInAndSemester_SemesterId(
+                List.copyOf(ClassScheduleService.coveredSections(schedule)),
+                course.getSemester().getSemesterId())) {
+            roster.putIfAbsent(st.getStudentId(), st);
         }
         List<DailyAttendanceResponse.StudentRow> rows = new ArrayList<>();
         for (Student st : roster.values().stream()
                 .sorted(Comparator.comparing(Student::getRollNo,
                         Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList()) {
-            int attended = attendedByStudent
-                    .getOrDefault(st.getStudentId(), Set.of()).size();
+            int attended = attendedByStudent.getOrDefault(st.getStudentId(), 0);
             double pct = scheduled == 0 ? 0 : round2(attended * 100.0 / scheduled);
             rows.add(new DailyAttendanceResponse.StudentRow(
                     st.getStudentId(), st.getRollNo(), st.getStudentName(),
-                    attended == 0 ? "ABSENT" : "PRESENT", attended, pct));
+                    attended > 0 ? "PRESENT" : "ABSENT", attended, pct));
         }
 
         String courseCode = courseCodeOf(schedule);
@@ -138,7 +138,9 @@ public class AttendanceCalculationService {
         LocalDate start = ym.atDay(1);
         LocalDate end = ym.atEndOfMonth();
 
-        // candidate sessions in the month whose course matches
+        // candidate sessions in the month whose course matches; holidays and
+        // cancelled days have no CLASS_SESSION row and therefore never enter
+        // the denominator.
         List<ClassSession> sessions = sessionRepository
                 .findBySchedule_ScheduleIdInAndSessionDateBetween(
                         scheduleRepository.findAll().stream()
@@ -164,10 +166,13 @@ public class AttendanceCalculationService {
         for (ClassSession s : sessions) {
             int sp = spanPeriods(s.getSchedule());
             scheduled += sp;
-            int att = (int) periodRepository.findBySessionId(sessionIdOf(s)).stream()
-                    .filter(p -> p.getAttendance().getStudent().getStudentId()
-                            .equals(studentId))
-                    .count();
+            int att = attendanceRepository.findBySession_SessionId(s.getSessionId()).stream()
+                    .filter(a -> a.getStudent().getStudentId().equals(studentId))
+                    .mapToInt(a -> a.getAttendanceStatus() == AttendanceStatus.PRESENT
+                            ? AttendanceService.attendedPeriods(
+                                    a.getAttendanceStartSlot(), a.getAttendanceEndSlot())
+                            : 0)
+                    .sum();
             attended += att;
             double pct = sp == 0 ? 0 : round2(att * 100.0 / sp);
             rows.add(new MonthlyAttendanceResponse.SessionRow(
@@ -181,8 +186,6 @@ public class AttendanceCalculationService {
                 courseCode, courseName, year, month,
                 scheduled, attended, absent, percent, rows);
     }
-
-    private static UUID sessionIdOf(ClassSession s) { return s.getSessionId(); }
 
     private static UUID courseIdOf(ClassSchedule s) {
         if (s.getTeachingAssignment() != null)

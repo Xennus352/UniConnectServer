@@ -16,6 +16,12 @@ public interface StudentRepository extends JpaRepository<Student, UUID> {
     List<Student> findByMajor_MajorId(UUID majorId);
     List<Student> findBySemester_SemesterId(UUID semesterId);
     List<Student> findBySection_SectionId(UUID sectionId);
+
+/** COHORT-AWARE roster: course semester + covered section(s). A section name
+ *  is shared by several semester cohorts, so Roll Call must never query by
+ *  section alone. */
+List<Student> findBySection_SectionIdAndSemester_SemesterId(UUID sectionId, UUID semesterId);
+List<Student> findBySection_SectionIdInAndSemester_SemesterId(java.util.List<UUID> sectionIds, UUID semesterId);
     List<Student> findByTerm_TermId(UUID termId);
     boolean existsByUser_UserId(UUID userId);
     List<Student> findByRollNoIn(java.util.Collection<String> rollNos);

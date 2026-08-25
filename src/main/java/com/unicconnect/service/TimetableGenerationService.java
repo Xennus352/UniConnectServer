@@ -465,8 +465,8 @@ public class TimetableGenerationService {
     /**
      * Heavy generation worker. Runs in its own transaction on a background
      * thread (invoked through the Spring proxy so {@code @Transactional}
-     * applies). Any exception rolls back the worker transaction â€” previously
-     * stored schedules are preserved â€” and the caller then flips the session
+     * applies). Any exception rolls back the worker transaction —â€ previously
+     * stored schedules are preserved —â€ and the caller then flips the session
      * to FAILED via {@link #markGenerationFailed}.
      */
     public GenerationSessionResponse runGenerationBackground(UUID generationId) {
@@ -545,7 +545,7 @@ public class TimetableGenerationService {
         List<SchedulingUnit> units = buildSchedulingUnits(
                 singletons, membersByGroup, requirementsByCourse, scope);
 
-        // Backtracking solver â€” solve per-semester for performance
+        // Backtracking solver —â€ solve per-semester for performance
         List<ClassSchedule> created = new ArrayList<>();
         List<String> failureReport = new ArrayList<>();
         ConflictGrid grid = new ConflictGrid();
@@ -1465,11 +1465,11 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                         reasons.add(sameGroup
                                 ? "ELECTIVE_SHARE_NOT_ALLOWED " + (cc != null ? cc : "unknown")
                                 + " (P" + otherStart + "-P" + otherEnd
-                                + ") â€” same lecturer; lecturer conflicts always win"
+                                + ") —â€ same lecturer; lecturer conflicts always win"
                                 : "STAFF_CONFLICT " + (cc != null ? cc : "unknown")
                                 + " (P" + otherStart + "-P" + otherEnd + ")");
                     }
-                    // Section conflicts are scoped by semester â€” different-semester students
+                    // Section conflicts are scoped by semester —â€ different-semester students
                     // sharing the same section label (e.g. Section A) don't actually conflict.
                     UUID sSemId = scheduleSemesterId(s);
                     if (unit.semesterId != null && unit.semesterId.equals(sSemId)
@@ -1478,7 +1478,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                         reasons.add(sameGroup
                                 ? "ELECTIVE_SHARE_NOT_ALLOWED " + (cc != null ? cc : "unknown")
                                 + " (P" + otherStart + "-P" + otherEnd
-                                + ") â€” only IDENTICAL windows may be shared by one elective group"
+                                + ") —â€ only IDENTICAL windows may be shared by one elective group"
                                 : "SECTION_CONFLICT " + (cc != null ? cc : "unknown")
                                 + " (P" + otherStart + "-P" + otherEnd + ")");
                     }
@@ -1674,6 +1674,11 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
         return null;
     }
 
+    /** Semester number lookup from generation-scope UUID key. */
+    private int semesterNumberOf(UUID semesterId) {
+        Semester sem = semesterRepository.findById(semesterId).orElse(null);
+        return sem != null ? sem.getSemesterNo() : 0;
+    }
     // ========== DATA VALIDATION ==========
 
     /**
@@ -1922,7 +1927,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                         if (b.getScheduleType() == ScheduleType.COURSE
                                 && a.getTeachingGroup() != null && b.getTeachingGroup() != null
                                 && a.getTeachingGroup().getGroupId().equals(b.getTeachingGroup().getGroupId())) {
-                            conflicts.add(describeConflictSlot(a) + " â€” " + ClassScheduleService.courseCodeOf(a)
+                            conflicts.add(describeConflictSlot(a) + " —â€ " + ClassScheduleService.courseCodeOf(a)
                                     + " is scheduled more than once on " + DAY_NAMES[day] + " for the same section");
                             continue;
                         }
@@ -1931,7 +1936,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                                 && ClassScheduleService.courseCodeOf(a).equals(ClassScheduleService.courseCodeOf(b))
                                 && !Collections.disjoint(ClassScheduleService.coveredSections(a),
                                         ClassScheduleService.coveredSections(b))) {
-                            conflicts.add(describeConflictSlot(a) + " â€” " + ClassScheduleService.courseCodeOf(a)
+                            conflicts.add(describeConflictSlot(a) + " —â€ " + ClassScheduleService.courseCodeOf(a)
                                     + " is scheduled more than once on " + DAY_NAMES[day] + " for the same section");
                             continue;
                         }
@@ -1952,7 +1957,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                                 : null;
                     } else if (!Collections.disjoint(ClassScheduleService.coveredStaff(a),
                             ClassScheduleService.coveredStaff(b))) {
-                        // The lecturer conflict rule always wins â€” even within an elective group.
+                        // The lecturer conflict rule always wins —â€ even within an elective group.
                         conflict = true;
                         reason = "the same lecturer is double-booked";
                     } else if (Collections.disjoint(ClassScheduleService.coveredSections(a),
@@ -1972,7 +1977,7 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                         reason = conflict ? "the same section is double-booked" : null;
                     }
                     if (conflict) {
-                        conflicts.add(describeConflictSlot(a) + " â€” " + scheduleLabel(a)
+                        conflicts.add(describeConflictSlot(a) + " —â€ " + scheduleLabel(a)
                                 + " conflicts with " + scheduleLabel(b) + " (" + reason + ")");
                     }
                 }
@@ -2235,7 +2240,8 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                 for (Course course : semesterCourses) {
                     if (!course.isRequired()) continue;
                     String ownerCode = curriculumEligibilityService.ownerMajorCode(course);
-                    if (!curriculumEligibilityService.isEligibleForSection(course, section, semesterId)) {
+                    if (!curriculumEligibilityService.isStructurallyEligible(course, section,
+                course.getSemester() != null ? course.getSemester().getSemesterNo() : 0)) {
                         continue;
                     }
                     if (!coveredByCourse.getOrDefault(course.getCourseId(), Set.of()).contains(sectionId)) {
@@ -2321,7 +2327,8 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                     // cohort/major eligibility - NEVER by existing
                     // TeachingAssignment rows. A missing delivery is created
                     // below through the normal assignment mechanism.
-                    if (!curriculumEligibilityService.isEligibleForSection(course, section, semesterId)) {
+                    if (!curriculumEligibilityService.isStructurallyEligible(course, section,
+                course.getSemester() != null ? course.getSemester().getSemesterNo() : 0)) {
                         continue;
                     }
                     String ownerMajor;
@@ -2449,7 +2456,8 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                 // has to assign manually.
                 for (Course course : courseRepository.findBySemester_SemesterId(scopeEntry.getKey())) {
                     if (!course.isRequired()) continue;
-                    if (!curriculumEligibilityService.isEligibleForSection(course, section, scopeEntry.getKey())) {
+                    if (!curriculumEligibilityService.isStructurallyEligible(course, section,
+                semesterNumberOf(scopeEntry.getKey()))) {
                         continue;
                     }
                     if (!boundByCourse.getOrDefault(course.getCourseId(), Set.of()).contains(sectionId)) {
@@ -2642,5 +2650,6 @@ private List<PlacementOption> generateValidPlacements(SchedulingUnit unit, Set<I
                 session.getFailureReport());
     }
 }
+
 
 

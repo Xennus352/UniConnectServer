@@ -158,13 +158,14 @@ class CurriculumEligibilityServiceTest {
         assertEquals(Set.of(), service.cohortMajorCodes(unknown));
     }
 
-    // C: eligibility at section level — shared course reaches CT-named section,
-    // CS-only course does not; unknown cohort receives nothing automatically
+    // C: eligibility at section level — structural programme resolution
     @Test
     void c_sectionLevelEligibilityRespectsCohort() {
         Course shared = course("CST-2212", "CST", 4, true);
         Course csOnly = course("CS-2256", "CS", 4, true);
+        Course ctOnly = course("CT-2236", "CT", 4, true);
 
+        // CT dedicated section: gets CT + shared, never CS-only
         Section ct = section("CT");
         when(studentRepository.findBySection_SectionId(ct.getSectionId())).thenReturn(List.of());
         Major ctMajor = new Major();
@@ -172,16 +173,24 @@ class CurriculumEligibilityServiceTest {
         when(majorRepository.findAll()).thenReturn(List.of(ctMajor));
         assertTrue(service.isEligibleForSection(shared, ct, semesterId(4)));
         assertFalse(service.isEligibleForSection(csOnly, ct, semesterId(4)));
+        assertTrue(service.isEligibleForSection(ctOnly, ct, semesterId(4)));
 
+        // Mixed section A (Sem 4): programme resolves to CS
+        // → CS + shared courses eligible; CT-only NOT eligible
         Section mixed = section("A");
         when(studentRepository.findBySection_SectionId(mixed.getSectionId()))
                 .thenReturn(List.of(student("CS"), student("CST"), student("CT")));
         assertTrue(service.isEligibleForSection(shared, mixed, semesterId(4)));
         assertTrue(service.isEligibleForSection(csOnly, mixed, semesterId(4)));
+        assertFalse(service.isEligibleForSection(ctOnly, mixed, semesterId(4)),
+                "CT-owned course must NOT be structurally eligible for CS section");
 
+        // Unknown section name: programme still resolves via semester fallback
         Section mystery = section("Omega");
         when(studentRepository.findBySection_SectionId(mystery.getSectionId())).thenReturn(List.of());
-        assertFalse(service.isEligibleForSection(shared, mystery, semesterId(4)));
+        // Semester ≥ 4 → programme=CS → CS+shared eligible; CT-only NOT
+        assertTrue(service.isEligibleForSection(shared, mystery, semesterId(4)));
+        assertFalse(service.isEligibleForSection(ctOnly, mystery, semesterId(4)));
     }
 
     // G: section-level semester isolation
