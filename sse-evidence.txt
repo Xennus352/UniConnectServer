@@ -1,0 +1,6 @@
+{"mode":"manage","generationId":"2b9bc1d3-4d7f-457f-93be-beb0c99dd3ef","termId":"efc68a91-5818-41aa-b4fb-893e240ea0ed","type":"TIMETABLE_MANAGEMENT_STARTED","lobbyId":"dab377b7-521b-4b46-9c96-d33024e96d30"}
+{"generationId":"2b9bc1d3-4d7f-457f-93be-beb0c99dd3ef","lockOwner":"Daw Mya","type":"SCHEDULE_LOCKED","scheduleId":null,"staffId":"372bca01-3d89-4cb6-ab51-3e31e9558d18","expiresAt":"2026-08-26T01:12:10.567105100Z"}
+{"generationId":"2b9bc1d3-4d7f-457f-93be-beb0c99dd3ef","type":"SCHEDULE_DELETED","scheduleId":"e2f943b3-24b2-4077-82d1-b74e1b8653bc"}
+---swap round---
+{"generationId":"2b9bc1d3-4d7f-457f-93be-beb0c99dd3ef","type":"SCHEDULE_UPDATED","scheduleId":"629c4004-9171-4f2a-83d1-43cef77f9a27"}
+{"generationId":"2b9bc1d3-4d7f-457f-93be-beb0c99dd3ef","type":"SCHEDULE_UPDATED","scheduleId":"b19807f2-07e4-42bb-9806-1f5c7c04af13"}

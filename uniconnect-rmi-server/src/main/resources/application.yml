@@ -1,0 +1,37 @@
+spring:
+  main:
+    # The RMI Server JVM opens NO HTTP port - only the JRMP registry :1099.
+    web-application-type: none
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://ep-empty-leaf-azyy2750.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&connectTimeout=60&socketTimeout=900}
+    username: ${DB_USERNAME:neondb_owner}
+    password: ${DB_PASSWORD:npg_PMrCxFm5s2If}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 90000
+      initialization-fail-timeout: -1
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+server:
+  port: 0
+
+rmi:
+  port: ${RMI_PORT:1099}
+  hostname: ${JAVA_RMI_SERVER_HOSTNAME:localhost}
+  user-binding: UserService
+  attendance-binding: AttendanceService
+  timetable-binding: TimetableService
+  shared-secret: ${RMI_SHARED_SECRET:uni-dev-secret-change-me}
+
+logging:
+  level:
+    com.unicconnect: INFO
+
